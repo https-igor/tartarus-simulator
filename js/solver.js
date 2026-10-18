@@ -369,9 +369,12 @@
   // best valid meal if it has one.
   function rise(ctx, t, comp, crowd, keep) {
     if (t >= RAINBOW) return ctx.R;
-    const beasts = keep >= 0 ? [keep] : [0, 1, 2, 3];
+    // The beasts it may re-roll into: all four, or `keep`.
+    const first = keep >= 0 ? keep : 0;
+    const count = keep >= 0 ? 1 : 4;
     let sum = 0;
-    for (const b of beasts) {
+    for (let k = 0; k < count; k++) {
+      const b = first + k;
       if (ctx.revenge) {
         // Avenger's Casket: 30% of the time a meal for the new form appears.
         const foods = ctx.eatsAt(t)[b];
@@ -386,7 +389,7 @@
         sum += feed(ctx, t, b, comp, crowd);
       }
     }
-    return sum / beasts.length;
+    return sum / count;
   }
 
   // An eater of beast b at tier t takes the best meal it has. With none, the
@@ -447,12 +450,17 @@
     if (ctx.muzzle && crowd <= 4) gain += 2;
     if (ctx.skewer && b === RAT) gain += 1;
     if (ctx.crown && b === LION) gain += 2;
-    const after = (g) => rise(ctx, Math.min(RAINBOW, t + g), comp, crowd - 1, ctx.fight ? b : -1);
-    // The Rusty Saw (25%) and the Barbed Whip (35%) each may add +1.
+    return -ctx.v[mealTier] + (chained && ctx.collar ? 0.2 * biteSawed(ctx, t, b, comp, crowd, gain) + 0.8 * biteSawed(ctx, t, b, comp, crowd, gain + 1) : biteSawed(ctx, t, b, comp, crowd, gain));
+  }
+  // After a bite of gain g: the eater rises and chains on.
+  function biteAfter(ctx, t, b, comp, crowd, g) {
+    return rise(ctx, Math.min(RAINBOW, t + g), comp, crowd - 1, ctx.fight ? b : -1);
+  }
+  // The Rusty Saw (25%) and the Barbed Whip (35%) each may add +1.
+  function biteSawed(ctx, t, b, comp, crowd, g) {
     const s = ctx.saw ? 0.25 : 0;
     const w = ctx.whip ? 0.35 : 0;
-    const sawed = (g) => (s || w ? (1 - s) * (1 - w) * after(g) + (s + w - 2 * s * w) * after(g + 1) + s * w * after(g + 2) : after(g));
-    return -ctx.v[mealTier] + (chained && ctx.collar ? 0.2 * sawed(gain) + 0.8 * sawed(gain + 1) : sawed(gain));
+    return s || w ? (1 - s) * (1 - w) * biteAfter(ctx, t, b, comp, crowd, g) + (s + w - 2 * s * w) * biteAfter(ctx, t, b, comp, crowd, g + 1) + s * w * biteAfter(ctx, t, b, comp, crowd, g + 2) : biteAfter(ctx, t, b, comp, crowd, g);
   }
 
   // The highest meal tier an eater of beast b at tier t can take: its own,
