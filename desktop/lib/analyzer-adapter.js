@@ -117,6 +117,7 @@
       const m = e.data || {};
       if (m.type === 'frame') {
         reading = { kind: m.kind, at: Date.now() };
+        holdMarks = false;
         recordPicture(m);
         // The Warden's Treasure's picture: the analyzer reads nothing from
         // it, but the marks need where its cards are.
@@ -217,8 +218,12 @@
   // on the latest picture, null once it clears or goes stale. Sent when
   // they change.
   let lastMarks = '';
+  // After a click in the game, the marks wait for the next picture: until
+  // it's read, the advice is still the last screen's, and sending it again
+  // put its marks back over the new screen.
+  let holdMarks = false;
   function postMarks() {
-    if (typeof D.marks !== 'function') return;
+    if (typeof D.marks !== 'function' || holdMarks) return;
     const A = window.TartarusAnalyzer;
     let p = null;
     try {
@@ -309,7 +314,10 @@
   D.onCommand((cmd) => {
     // The app took the marks down for a new screen: the next ones are sent
     // even if they're the same as before.
-    if (cmd === 'marks-reset') lastMarks = '';
+    if (cmd === 'marks-reset') {
+      lastMarks = '';
+      holdMarks = true;
+    }
     else if (cmd === 'fix') {
       if (!click('az-fix')) {
         const target = shown($('az-problems')) ? $('az-problems') : $('az-game');
