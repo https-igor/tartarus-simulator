@@ -1069,14 +1069,16 @@
   // The trainer panel: the recommended move right away (the trained strategy's
   // pick), then a live check that plays every option out many times from the
   // current position with js/solver.js, and a grade for each move you make.
-  // The playouts run in a Web Worker when the page allows one, and on this
-  // thread otherwise. Moves are scored by the Rainbows vaulted by the end of
-  // the run.
+  // The playouts run on a worker for every core but one when the page allows
+  // workers (js/solver-pool.js), each playing its share of the rounds, and on
+  // this thread otherwise. Moves are scored by the Rainbows vaulted by the
+  // end of the run.
   const SOLVER_ROLLOUTS = 800;
   const SOLVER_ROLLOUTS_HERE = 300;
   const LIVE_MIN = 150; // playouts per option before the live check leads
   const SWITCH_MIN = 0.05; // Rainbows a live pick must gain over the strategy's to replace it
-  const solver = { worker: null, failed: false, id: 0, key: '', stateKey: '', result: null, instantKey: '', instant: null };
+  const SOLVER_WORKERS = Math.max(1, (navigator.hardwareConcurrency || 2) - 1);
+  const solver = { pool: null, id: 0, key: '', stateKey: '', result: null, instantKey: '', instant: null };
 
   const solverKey = (st) => {
     const last = st.log[st.log.length - 1];
@@ -1165,29 +1167,24 @@
     solver.result = null;
     const id = solver.id;
     const state = Object.assign({}, st, { log: [] });
-    if (!solver.worker && !solver.failed) {
-      try {
-        solver.worker = new Worker(`js/solver-worker.js${SCRIPT_QUERY}`);
-        solver.worker.onmessage = (e) => {
-          if (e.data.id !== solver.id) return;
-          solver.result = e.data.result;
+    if (!solver.pool && window.TartarusSolverPool && typeof Worker === 'function') {
+      solver.pool = window.TartarusSolverPool.create({
+        url: `js/solver-worker.js${SCRIPT_QUERY}`,
+        count: () => SOLVER_WORKERS,
+        onResult: (result, resultId) => {
+          if (resultId !== solver.id) return;
+          solver.result = result;
           renderSolver();
           renderHints();
-        };
-        solver.worker.onerror = () => {
+        },
+        onFail: () => {
           // Fall back to this thread, and redo the current position.
-          solver.failed = true;
-          solver.worker = null;
           solver.key = '';
           if (ui.prefs.advisor && solverFits(ui.state)) startSolver();
-        };
-      } catch (e) {
-        solver.failed = true;
-        solver.worker = null;
-      }
+        },
+      });
     }
-    if (solver.worker) solver.worker.postMessage({ id, state: JSON.parse(JSON.stringify(state)), rollouts: SOLVER_ROLLOUTS });
-    else solveHere(id, state);
+    if (!solver.pool || !solver.pool.start(id, JSON.parse(JSON.stringify(state)), SOLVER_ROLLOUTS)) solveHere(id, state);
   }
 
   function solveHere(id, state) {
