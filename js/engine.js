@@ -1080,6 +1080,20 @@
     return out;
   }
 
+  // devourOptions(state, n).length > 0, without building the list (the
+  // solver asks for every inmate when it weighs a Warden's Treasure gift).
+  function hasDevourOption(state, n) {
+    const cell = state.cells[n];
+    if (!cell || cell.sealed || !cell.inmate) return false;
+    const eater = cell.inmate;
+    for (const c of state.cells) {
+      if (c === cell) continue;
+      if (!c.sealed && canEat(state, eater, c.inmate)) return true;
+      if (c.sealed && c.scratch && eater.beast === 'wolf' && c.hidden && c.hidden.tier === eater.tier && eater.tier < RAINBOW) return true;
+    }
+    return false;
+  }
+
   // The sure part of a devour's gain; Rusty Saw and Avenger's Casket roll later.
   function gainFor(state, from, option) {
     const eater = state.cells[from].inmate;
@@ -2213,7 +2227,7 @@
     moveWarden: bounded(moveWarden),
     addTool: bounded(addTool),
     removeTool: bounded(removeTool),
-    patrolOptions, clockwisePath, devourOptions, startOptions, chainOptions, canStopChain, cageFight, gainFor, executionVictims, canEat, eatsOf, canDevourNow, canSwapNow, canHuntNow, huntTargets, canReroll,
+    patrolOptions, clockwisePath, devourOptions, hasDevourOption, startOptions, chainOptions, canStopChain, cageFight, gainFor, executionVictims, canEat, eatsOf, canDevourNow, canSwapNow, canHuntNow, huntTargets, canReroll,
     linkOf, cellOf, boardInmates, rosterOf, advise, limits,
     toolText, toolName, eventName, describe, tierName, beastName, cellLabel, plural, stepsBetween, scarceBeasts, lowestInmates,
   };

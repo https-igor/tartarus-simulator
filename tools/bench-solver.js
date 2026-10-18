@@ -7,7 +7,8 @@
  *   node tools/bench-solver.js --save base.json   also save every row's values
  *   node tools/bench-solver.js --check base.json  fail if any value differs
  *
- *   Options: --rollouts N (default 150), --positions N (default 12), --repeat N (default 3)
+ *   Options: --rollouts N (default 150), --positions N (default 12), --repeat N (default 3),
+ *            --rewards on|off (default: positions alternate rewards on and off)
  */
 'use strict';
 
@@ -23,6 +24,8 @@ const arg = (name, fallback) => {
 const ROLLOUTS = Number(arg('rollouts', 150));
 const POSITIONS = Number(arg('positions', 12));
 const REPEAT = Number(arg('repeat', 3));
+const REWARDS = arg('rewards', null);
+const rewardsFor = (i) => (REWARDS === 'on' ? true : REWARDS === 'off' ? false : i % 2 === 0);
 
 // Positions from real playouts: each seed's run is played with the strategy
 // and stopped after a different number of moves, so the set covers patrols,
@@ -31,7 +34,7 @@ const REPEAT = Number(arg('repeat', 3));
 function positionsSafe() {
   const out = [];
   for (let i = 0; out.length < POSITIONS && i < POSITIONS * 20; i++) {
-    const st = T.newGame({ seed: `BENCH-${i}`, params: { rewards: i % 2 === 0 } });
+    const st = T.newGame({ seed: `BENCH-${i}`, params: { rewards: rewardsFor(i) } });
     const stopAt = 3 + ((i * 7) % 40);
     let moves = 0;
     try {

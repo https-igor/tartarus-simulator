@@ -901,13 +901,24 @@
 
   // Board value for comparing gifts: tier values plus vaulted Rainbows, with
   // a bonus for inmates that have something to eat.
+  // Only ctx.v and ctx.R are read, so a gift's trial board needs no full
+  // context (giftWorth below).
+  const canDevourFrom = T.hasDevourOption || ((st, n) => T.devourOptions(st, n).length > 0);
   function boardValue(st, ctx) {
     let value = st.vault.length * ctx.R;
     for (const c of st.cells) {
       if (c.sealed || !c.inmate) continue;
-      value += ctx.v[c.inmate.tier] * (T.devourOptions(st, c.n).length ? 1.25 : 1);
+      value += ctx.v[c.inmate.tier] * (canDevourFrom(st, c.n) ? 1.25 : 1);
     }
     return value;
+  }
+
+  // boardValue(trial, context(trial, P)) for a gift's trial board: context()
+  // makes v and R the same way (v from P.tierBase, R from the trial's vault),
+  // and nothing else of it is read.
+  function giftWorth(trial, v, P) {
+    const vaultFull = !!T.VAULT_SLOTS && trial.vault.length >= T.VAULT_SLOTS;
+    return boardValue(trial, { v, R: vaultFull ? v[T.SUPREME] : v[RAINBOW] * P.rainbowMult });
   }
 
   // The run's last move is made: the last day, with today's consume,
@@ -918,6 +929,7 @@
   function pickGift(st, ctx, options, random) {
     const P = ctx.P;
     if (P.giftRank) return P.giftRank.find((id) => options.includes(id)) || options[0];
+    const share = canShare(st);
     // After the last move, a gift that makes a Rainbow now still comes
     // first; otherwise the Thumb Ring (the user, 2026-10-17: "thumb ring is
     // more overall chests at the end").
@@ -926,7 +938,7 @@
       for (const id of options) {
         let gain = 0;
         for (let i = 0; i < 3; i++) {
-          const trial = clone(st);
+          const trial = trialClone(st, share);
           trial.rng = (random() * 4294967296) >>> 0;
           if (T.choose(trial, id).ok) gain += trial.vault.length - st.vault.length;
         }
@@ -945,7 +957,7 @@
       const left = st.pending.filter((p) => p.kind === 'gift').length;
       if (options.includes('horn')) {
         for (let i = 0; i < 3; i++) {
-          const trial = clone(st);
+          const trial = trialClone(st, share);
           trial.rng = (random() * 4294967296) >>> 0;
           if (T.choose(trial, 'horn').ok && trial.vault.length > st.vault.length) return 'horn';
         }
@@ -953,15 +965,23 @@
       if (left >= 3 && options.includes('ring') && st.cells.some((c) => c.sealed && c.n !== T.OFFICE)) return 'ring';
       if (left >= 2 && options.includes('wine') && st.cells.some((c) => !c.sealed && c.inmate && c.inmate.tier < T.SUPREME - 1)) return 'wine';
     }
+    // One gift on offer is the pick whatever it's worth: only its dice are
+    // drawn, so the solver's own dice go on the same.
+    if (options.length === 1) {
+      const samples = options[0] === 'ring' || options[0] === 'horn' ? 3 : 1;
+      for (let i = 0; i < samples; i++) random();
+      return options[0];
+    }
+    const v = ctx.v;
     let best = null;
     for (const id of options) {
       let value = 0;
       const samples = id === 'ring' || id === 'horn' ? 3 : 1;
       for (let i = 0; i < samples; i++) {
-        const trial = clone(st);
+        const trial = trialClone(st, share);
         trial.rng = (random() * 4294967296) >>> 0;
         if (!T.choose(trial, id).ok) continue;
-        value += boardValue(trial, context(trial, P));
+        value += giftWorth(trial, v, P);
       }
       value /= samples;
       if (!best || value > best.value) best = { id, value };
@@ -1210,6 +1230,75 @@
     return copy;
   }
 
+  // The same copy as clone(), made faster for the solver's own trial boards
+  // (a playout's board, and each Warden's Treasure gift it weighs):
+  //  - Objects are copied with spread and then fixed up field by field,
+  //    which V8 does much faster than building them key by key. Spread
+  //    takes the own enumerable fields in for-in's order; it would also take
+  //    symbol-keyed fields, which no board has (neither the engine nor the
+  //    solver makes any). A field copyJson would leave out (undefined, a
+  //    function) sends that object back to copyJson.
+  //  - With `share`, the params and the event pool are the source's own
+  //    objects, not copies. The engine never writes into either (it gives
+  //    the board a new event pool when the pool changes), so a trial can't
+  //    tell; share only when both are JSON-plain (jsonPlain), so the copy
+  //    would have been equal.
+  const hasOwn = Object.prototype.hasOwnProperty;
+  const unfit = (x) => x === undefined || typeof x === 'function' || typeof x === 'symbol';
+  function copyFast(v) {
+    if (typeof v !== 'object' || v === null) return typeof v === 'number' && !Number.isFinite(v) ? null : v;
+    if (typeof v.toJSON === 'function') return JSON.parse(JSON.stringify(v));
+    if (Array.isArray(v)) {
+      const out = new Array(v.length);
+      for (let i = 0; i < v.length; i++) {
+        const x = v[i];
+        out[i] = unfit(x) ? null : copyFast(x);
+      }
+      return out;
+    }
+    const out = { ...v };
+    for (const k in out) {
+      if (!hasOwn.call(out, k)) continue;
+      const x = out[k];
+      if (typeof x === 'object') {
+        if (x !== null) out[k] = copyFast(x);
+      } else if (typeof x === 'number') {
+        if (!Number.isFinite(x)) out[k] = null;
+      } else if (unfit(x)) return copyJson(v);
+    }
+    return out;
+  }
+  // Would copyJson give back an equal value (same fields, same order)?
+  function jsonPlain(v) {
+    if (v === null || typeof v === 'string' || typeof v === 'boolean') return true;
+    if (typeof v === 'number') return Number.isFinite(v);
+    if (typeof v !== 'object') return false;
+    if (Array.isArray(v)) {
+      if (Object.getPrototypeOf(v) !== Array.prototype || v.toJSON !== undefined) return false;
+      for (let i = 0; i < v.length; i++) if (!jsonPlain(v[i])) return false;
+      return true;
+    }
+    if (Object.getPrototypeOf(v) !== Object.prototype || v.toJSON !== undefined) return false;
+    for (const k in v) if (!hasOwn.call(v, k) || !jsonPlain(v[k])) return false;
+    return true;
+  }
+  const canShare = (st) => jsonPlain(st.params) && jsonPlain(st.eventPool);
+  function trialClone(st, share) {
+    if (!hasOwn.call(st, 'log') || Array.isArray(st) || typeof st.toJSON === 'function') return clone(st);
+    const out = { ...st };
+    for (const k in out) {
+      if (!hasOwn.call(out, k)) continue;
+      const x = out[k];
+      if (k === 'log') out.log = [];
+      else if (typeof x === 'object') {
+        if (x !== null && !(share && (k === 'params' || k === 'eventPool'))) out[k] = copyFast(x);
+      } else if (typeof x === 'number') {
+        if (!Number.isFinite(x)) out[k] = null;
+      } else if (unfit(x)) return clone(st);
+    }
+    return out;
+  }
+
   // Re-rolls everything the player can't see: the game's dice, and any
   // occupant behind a door that hasn't been fully revealed.
   function hideFuture(st, seed) {
@@ -1358,6 +1447,9 @@
   function solve(st, opts) {
     const o = Object.assign({ rollouts: 400, seed: 1, stream: 0, params: null }, opts || {});
     const base = clone(st);
+    // base is the solver's own copy, made by copyJson: JSON-plain, and
+    // nothing writes into its params or event pool.
+    const share = canShare(base);
     const list = candidates(base);
     const random = rng32(o.stream ? (o.seed ^ Math.imul(o.stream, 0x9e3779b1)) >>> 0 : o.seed);
     const pick = list.length ? decide(clone(base), o.params, rng32(o.seed ^ 0x5bd1e995)) : null;
@@ -1372,7 +1464,7 @@
         while (round < o.rollouts && rows.length > 1 && Date.now() < stop) {
           const seed = (random() * 4294967296) >>> 0;
           for (const row of rows) {
-            const trial = clone(base);
+            const trial = trialClone(base, share);
             hideFuture(trial, seed);
             if (!apply(trial, row.action).ok) {
               row.vals.push(NaN);
