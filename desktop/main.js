@@ -1501,7 +1501,15 @@ ipcMain.on('site:run', (e, what) => {
 // runs, how Auto Screenshot Mode is doing in numbers: for the debug log,
 // to find out why pictures don't come. Never the game log's lines.
 ipcMain.on('site:trigger', (e, kind) => {
-  if (fromPage(e, 'follow')) note('trigger:', String(kind));
+  if (!fromPage(e, 'follow')) return;
+  note('trigger:', String(kind));
+  // The game is moving on: the marks for the screen before go at once, not
+  // when the next picture has been taken and read, seconds later; the
+  // analyzer sends the next ones even if they're the same.
+  if (kind !== 'speed' && kind !== 'skip') {
+    hideMarks();
+    send('analyzer', 'command', 'marks-reset');
+  }
 });
 let checked = null; // the counts at the last minute's note
 // A count since the last note; one smaller than then started over (a new

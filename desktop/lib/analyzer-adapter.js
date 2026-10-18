@@ -299,7 +299,10 @@
     });
   }
   D.onCommand((cmd) => {
-    if (cmd === 'fix') {
+    // The app took the marks down for a new screen: the next ones are sent
+    // even if they're the same as before.
+    if (cmd === 'marks-reset') lastMarks = '';
+    else if (cmd === 'fix') {
       if (!click('az-fix')) {
         const target = shown($('az-problems')) ? $('az-problems') : $('az-game');
         if (target) target.scrollIntoView({ block: 'center', behavior: 'smooth' });

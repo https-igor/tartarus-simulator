@@ -18,7 +18,9 @@
 (function () {
   'use strict';
 
-  const POLL_MS = 1000;
+  // How often the log is read for new lines: a trigger is heard this long
+  // after the game writes it, at most (a read of a few new bytes is cheap).
+  const POLL_MS = 250;
   const IDB = 'tartarus-sim-capture';
   const listeners = { status: [], hit: [], seen: [], frame: [] };
   // detail: whether the game writes the detail lines the triggers come from
