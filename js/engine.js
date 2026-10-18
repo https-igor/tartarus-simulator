@@ -1818,7 +1818,7 @@
     if (id === 'ring') {
       for (const c of shuffle(state, state.cells.filter((x) => x.sealed)).slice(0, 3)) openCell(state, c, 'side', events);
     } else if (id === 'horn') {
-      for (const inmateId of boardInmates(state).filter((i) => devourOptions(state, cellOf(state, i.id).n).length).map((i) => i.id)) {
+      for (const inmateId of boardInmates(state).filter((i) => hasDevourOption(state, cellOf(state, i.id).n)).map((i) => i.id)) {
         const cell = boardCellOf(state, inmateId);
         if (!cell) continue;
         const options = devourOptions(state, cell.n).filter((o) => !o.scratch);
@@ -1829,10 +1829,10 @@
     } else if (id === 'wine') {
       for (const i of boardInmates(state).filter((x) => x.tier < 3)) if (boardCellOf(state, i.id)) promote(state, i, 1, false, events);
     } else if (id === 'brand') {
-      const hungry = shuffle(state, boardInmates(state).filter((i) => !devourOptions(state, cellOf(state, i.id).n).length)).slice(0, 4);
+      const hungry = shuffle(state, boardInmates(state).filter((i) => !hasDevourOption(state, cellOf(state, i.id).n))).slice(0, 4);
       for (const i of hungry) {
         const cell = boardCellOf(state, i.id);
-        if (!cell || devourOptions(state, cell.n).length) continue;
+        if (!cell || hasDevourOption(state, cell.n)) continue;
         const possible = BEASTS.filter((b) => boardInmates(state).some((o) => canEat(state, { id: i.id, beast: b, tier: i.tier }, o)));
         if (possible.length) {
           i.beast = pickOne(state, possible);

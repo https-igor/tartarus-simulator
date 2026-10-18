@@ -527,7 +527,16 @@
     let value = 0;
     for (let t = 0; t < RAINBOW; t++) {
       let fed = 0;
-      for (let b = 0; b < 4; b++) if (ctx.eatsAt(t)[b].some((f) => comp[t * 4 + f] > 0)) fed += 1;
+      const diet = ctx.eatsAt(t);
+      for (let b = 0; b < 4; b++) {
+        const foods = diet[b];
+        for (let i = 0; i < foods.length; i++) {
+          if (comp[t * 4 + foods[i]] > 0) {
+            fed += 1;
+            break;
+          }
+        }
+      }
       value += (fed / 4) * ctx.v[t];
     }
     return value;
@@ -835,7 +844,7 @@
         score += P.wWalk * known(c);
         why = `its ${T.describe(c.inmate)} can act today`;
         // Survival of the Fittest: a consume today counts toward its tool.
-        if (ctx.consumesLeft && P.wConsumeWalk && T.devourOptions(st, n).length) {
+        if (ctx.consumesLeft && P.wConsumeWalk && canDevourFrom(st, n)) {
           score += P.wConsumeWalk / ctx.consumesLeft;
           why += ', and its consume counts for Survival of the Fittest';
         }
@@ -969,7 +978,7 @@
   // a bonus for inmates that have something to eat.
   // Only ctx.v and ctx.R are read, so a gift's trial board needs no full
   // context (giftWorth below).
-  const canDevourFrom = T.hasDevourOption || ((st, n) => T.devourOptions(st, n).length > 0);
+  const canDevourFrom = T.hasDevourOption || ((st, n) => canDevourFrom(st, n) > 0);
   function boardValue(st, ctx) {
     let value = st.vault.length * ctx.R;
     for (const c of st.cells) {
