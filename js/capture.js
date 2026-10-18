@@ -13,7 +13,8 @@
  *   TartarusCapture.on('status' | 'hit' | 'seen' | 'frame', fn)
  *   connectLog() / resumeLog(click) / stopLog()
  *   connectWindow() / useStream(stream) / stopWindow()
- *   setRules([{ kind, pattern, settle, rank }]) / setWatch(pattern)
+ *   setRules([{ kind, pattern, settle, rank, early }]) / setWatch(pattern)
+ *   setEarly(on) / setPace(factor)
  *   captureNow(kind) / useHandle(handle) (tests: any object with getFile()) */
 (function () {
   'use strict';
@@ -28,6 +29,21 @@
   // of a 0-255 gray level) count as still. Lit portraits flicker a little,
   // hence a margin above 0. Without movement seen, the settle time stands.
   const STILL = { on: false, first: 450, every: 150, diff: 2.5, moved: 8, calm: 2, w: 48, h: 24 };
+  // Early pictures (setEarly): a board picture goes as soon as the move's
+  // animations should be done, by the log, and the usual one still goes at
+  // the settle time to check it (the analyzer drops it when it shows the
+  // same board). A trigger with an early time arms one; "cue" lines (the
+  // server's answer to a move, a click, the prison's sounds) push it back,
+  // each to at least its own time after it; and it goes only if it beats
+  // the usual picture by EARLY_GAIN ms. Never sooner than EARLY_MIN ms after
+  // a line, whatever the Speed-up pace: the log is read every POLL_MS, so
+  // two lines 340 ms apart can arrive 590 ms apart (tools/latency-sim.js).
+  const EARLY_MIN = 500;
+  const EARLY_GAIN = 250;
+  // A click this soon after the trigger that armed an early picture is part
+  // of that move (read together, or one look apart).
+  const MOVE_SAME = 300;
+  const EARLY_KINDS = ['board', 'treasure'];
   const IDB = 'tartarus-sim-capture';
   const listeners = { status: [], hit: [], seen: [], frame: [] };
   // detail: whether the game writes the detail lines the triggers come from
@@ -35,7 +51,8 @@
   // lang: the game's language code from its log ("ru", "zh"), '' until seen.
   // shared: 'window', or 'screen' for the desktop app's fallback (useCrop).
   const state = { log: 'off', file: '', window: 'off', windowSize: '', shared: '', lines: 0, hits: 0, frames: 0, note: '', error: '', detail: '', lang: '' };
-  let rules = []; // [{ kind, re, settle, rank }]
+  let rules = []; // [{ kind, re, settle, rank, early }]
+  let early = false; // early pictures on (setEarly)
   let watch = null; // log lines worth showing while finding triggers
   let burst = null; // matched lines waiting for the animations to settle
   let pace = 1; // settle times are scaled by this: the game's Speed-up runs its animations faster
@@ -279,6 +296,33 @@
     }
     const rule = rules[h.rule];
     if (!rule) return;
+    // A "cue" line (the server's answer, a sound or screen of the prison)
+    // takes no picture and isn't a trigger: it only holds back an early
+    // picture that's waiting, as the screen is still changing. A "move"
+    // line (the player's click) drops one armed before it: its screen is
+    // going, and the next trigger arms another. One that comes with the
+    // trigger (the meal clicked, with its sound) holds it back instead.
+    if (rule.kind === 'cue' || rule.kind === 'move') {
+      // A click after an early picture: that picture showed the screen, and
+      // its check would catch the next one half drawn, so it isn't taken.
+      if (rule.kind === 'move' && burst && burst.shot && Date.now() - burst.armedAt > MOVE_SAME) {
+        clearTimeout(burst.timer);
+        clearTimeout(burst.still);
+        clearTimeout(burst.earlyTimer);
+        burst = null;
+      }
+      // An early picture on its way when one comes is dropped (fireEarly).
+      if (burst) burst.seq += 1;
+      if (burst && burst.armed) {
+        if (rule.kind === 'move' && Date.now() - burst.armedAt > MOVE_SAME) {
+          burst.armed = false;
+          burst.earlyAt = 0;
+        } else burst.earlyAt = Math.max(burst.earlyAt, Date.now() + earlyWait(rule.settle));
+        planEarly(burst);
+      }
+      emit('seen', { at, line: h.line, kind: rule.kind });
+      return;
+    }
     const m = rule.re.exec(h.line);
     const hit = { kind: rule.kind, at, text: m ? (m[1] || m[0]).slice(0, 120) : '', line: h.line };
     setState({ hits: state.hits + 1 });
@@ -290,6 +334,7 @@
       if (burst) {
         clearTimeout(burst.timer);
         clearTimeout(burst.still);
+        clearTimeout(burst.earlyTimer);
       }
       burst = null;
       return;
@@ -304,11 +349,12 @@
     // pictured).
     if (burst && burst.kind === 'treasure' && rule.kind === 'board') {
       clearTimeout(burst.timer);
+      clearTimeout(burst.earlyTimer);
       fire();
     }
     // Lines in a burst become one frame, once the log has been quiet for the
     // longest settle time among them.
-    if (!burst) burst = { kind: rule.kind, rank: rule.rank, settle: 0, hits: [], timer: 0, still: 0, since: Date.now(), prev: null, moved: false, calm: 0, diffs: [], early: false };
+    if (!burst) burst = { kind: rule.kind, rank: rule.rank, settle: 0, hits: [], timer: 0, still: 0, since: Date.now(), prev: null, moved: false, calm: 0, diffs: [], early: false, due: 0, armed: false, armedAt: 0, earlyAt: 0, earlyTimer: 0, shot: false, seq: 0 };
     if (rule.rank > burst.rank) {
       burst.kind = rule.kind;
       burst.rank = rule.rank;
@@ -317,6 +363,19 @@
     if (burst.hits.length < 40) burst.hits.push({ kind: hit.kind, at: hit.at, text: hit.text });
     clearTimeout(burst.timer);
     burst.timer = setTimeout(fire, burst.settle);
+    burst.due = Date.now() + burst.settle;
+    // A trigger with an early time arms an early picture, at least that
+    // long after it (0: only once cue lines come). A move after an early
+    // picture arms another; its usual picture is then of that move.
+    burst.shot = false;
+    burst.seq += 1;
+    if (early && rule.early !== null && rule.early !== undefined) {
+      if (!burst.armed) burst.earlyAt = 0;
+      burst.armed = true;
+      burst.armedAt = Date.now();
+      if (rule.early > 0) burst.earlyAt = Math.max(burst.earlyAt, Date.now() + earlyWait(rule.early));
+    }
+    planEarly(burst);
     // A new line restarts the watch for stillness too.
     clearTimeout(burst.still);
     burst.prev = null;
@@ -326,6 +385,39 @@
     // thumbnails no more than the portraits' flames, so it never cut a wait
     // short, and its looks added ~0.2 s to each picture.
     if (STILL.on) burst.still = setTimeout(() => stillTick(b), Math.max(200, STILL.first * pace));
+  }
+
+  const earlyWait = (ms) => Math.max(EARLY_MIN, ms * pace);
+
+  // The early picture's timer, from the burst's earliest time for it. Only
+  // a board's picture and the Warden's Treasure's go early (the other
+  // popups' go as before), and only if it comes well before the usual one.
+  function planEarly(b) {
+    clearTimeout(b.earlyTimer);
+    b.earlyTimer = 0;
+    if (!b.armed || !b.earlyAt || !EARLY_KINDS.includes(b.kind)) return;
+    if (b.earlyAt > b.due - EARLY_GAIN) return;
+    b.earlyTimer = setTimeout(() => fireEarly(b), Math.max(0, b.earlyAt - Date.now()));
+  }
+
+  async function fireEarly(b) {
+    if (burst !== b || !b.armed || !EARLY_KINDS.includes(b.kind) || Date.now() > b.due - EARLY_GAIN) return;
+    b.armed = false;
+    b.earlyAt = 0;
+    const seq = b.seq;
+    const hits = b.hits.slice();
+    const frame = await grab();
+    // The screen moved on while the frame came (a new day's banner, a
+    // popup, the player's next click): it's dropped, and the usual picture
+    // goes as before.
+    if (burst !== b || !EARLY_KINDS.includes(b.kind) || b.seq !== seq || !frame) {
+      if (frame && typeof frame.close === 'function') frame.close();
+      return;
+    }
+    b.shot = true;
+    setState({ frames: state.frames + 1 });
+    const settled = { ms: Date.now() - b.since, early: true, of: b.settle, diffs: [] };
+    emit('frame', { kind: b.kind, hits, frame, blank: isBlank(frame), why: '', time: new Date(), settled, first: true });
   }
 
   // One look at the shared window while a burst waits: once it has moved and
@@ -377,11 +469,13 @@
     burst = null;
     if (!b) return;
     clearTimeout(b.still);
+    clearTimeout(b.earlyTimer);
     const frame = await grab();
     if (frame) setState({ frames: state.frames + 1 });
     // How long it waited, and whether stillness cut it short: for tuning.
     const settled = { ms: Date.now() - b.since, early: b.early, of: b.settle, diffs: b.diffs };
-    emit('frame', { kind: b.kind, hits: b.hits, frame, blank: isBlank(frame), why: frame ? '' : whyNot(), time: new Date(), settled });
+    // check: an early picture of the same move went before this one.
+    emit('frame', { kind: b.kind, hits: b.hits, frame, blank: isBlank(frame), why: frame ? '' : whyNot(), time: new Date(), settled, check: b.shot });
   }
 
   // #endregion
@@ -736,7 +830,9 @@
     rules = [];
     for (const r of list || []) {
       try {
-        rules.push({ kind: r.kind || 'board', re: new RegExp(r.pattern, 'i'), settle: Math.max(100, Number(r.settle) || 900), rank: Number(r.rank) || 0 });
+        const cue = r.kind === 'cue' || r.kind === 'move';
+        const soon = r.early === null || r.early === undefined || r.early === '' || !Number.isFinite(Number(r.early)) ? null : Math.max(0, Number(r.early));
+        rules.push({ kind: r.kind || 'board', re: new RegExp(r.pattern, 'i'), settle: cue ? Math.max(0, Number(r.settle) || 0) : Math.max(100, Number(r.settle) || 900), rank: Number(r.rank) || 0, early: cue ? null : soon });
       } catch (e) {
         // A bad pattern is left out.
       }
@@ -750,6 +846,17 @@
   function setPace(factor) {
     pace = Math.min(1, Math.max(0.2, Number(factor) || 1));
     return pace;
+  }
+
+  // Early pictures on or off (see EARLY_MIN). Off, pictures go only at the
+  // settle times, as before.
+  function setEarly(on) {
+    early = !!on;
+    if (!early && burst) {
+      clearTimeout(burst.earlyTimer);
+      burst.armed = false;
+    }
+    return early;
   }
 
   function setWatch(pattern) {
@@ -791,6 +898,7 @@
     setRules,
     setWatch,
     setPace,
+    setEarly,
     captureNow,
     grab,
   };

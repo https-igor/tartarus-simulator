@@ -27,32 +27,48 @@
   // after either shows the screen settled, while you choose. The results
   // screen at the end writes the day line too, with max=0, and is left out.
   const DEFAULT_RULES = [
-    '# kind | pattern | settle ms  (one trigger a line; # starts a note)',
+    '# kind | pattern | settle ms | early ms  (one trigger a line; # starts a note)',
     '# Tartarus Prison is S16 in the log. A run\'s objective, when it shows one:',
     'objective | S16BoardTaskPop Run | 1500',
     '# The pick of 3 instruments, and after a re-roll:',
     'instruments | S16BoardRelicPop Run | 1500',
     'instruments | Btn_S16Board_RelicPop_Reroll | 2000',
     '# Each day, once its banner closes, and after a move, once its cards come up:',
-    'board | \\[S16LastDay\\] check cur=\\d+ max=[1-9] | 1500',
-    'board | UI_S16_Card_Up | 1500',
+    'board | \\[S16LastDay\\] check cur=\\d+ max=[1-9] | 1500 | 900',
+    'board | UI_S16_Card_Up | 1500 | 800',
     '# After an action in the cell, and after each bite of a consume chain',
     '# (the next meal to pick, or the board after the chain), once it plays',
     "# out; unless the day ends, as a new day's banner drops a picture still",
     '# waiting (skip):',
-    'board | Btn_S16Board_ActionCell | 2000',
-    'board | UI_S16_Click_Eat | 2500',
+    'board | Btn_S16Board_ActionCell | 2000 | 1200',
+    'board | UI_S16_Click_Eat | 2500 | 0',
     'skip | S16BoardNewDayPop Run | 0',
     "# The Warden's Treasure, which a Chromatic prisoner opens, and the board",
     '# once it closes, with the gift taken (a consume can open two in a row):',
-    'treasure | S16BoardColoredPop Run | 1500',
+    'treasure | S16BoardColoredPop Run | 1500 | 1000',
     'board | S16BoardColoredPop Destory | 600',
     "# The game's Speed-up button: no picture, it flips 'Speed-up is on' here:",
     'speed | Btn_S16Board_Top_Speed | 0',
     '# A Cancel (a consume chain stopped), once the board settles:',
-    'board | UI_S16_Click_Cancel | 1500',
+    'board | UI_S16_Click_Cancel | 1500 | 0',
     "# After an event's Confirm (the Sewer Ratway's cell pick, or the board after it):",
-    'board | Btn_S16Board_EventPop_Confirm | 1500',
+    'board | Btn_S16Board_EventPop_Confirm | 1500 | 0',
+    '# Early pictures: a board trigger with an early time takes a picture that',
+    '# long after it (0: once the cue lines below allow), and the usual one at',
+    '# its settle time to check it. Each "cue" line holds the early picture',
+    '# back to at least its time after it: the server\'s answer to a move,',
+    '# the prison\'s sounds and screens as the board changes, longer for those',
+    '# that open a popup (a Chromatic, an objective done, the riot). A "move"',
+    '# line, a click of the player\'s, drops an early picture still waiting',
+    '# from before it, as that screen is going (with its trigger, it holds it):',
+    'cue | RecvPushCombineMsg ProtoId | 800',
+    'move | normal-click Btn_S16 | 1000',
+    'cue | UI_S16_Premium_Quality | 1500',
+    'cue | UI_S16_Prison_Task_Done | 1500',
+    'cue | UI_S16_Riot_Interface | 1500',
+    'cue | UI_S16_\\w*Window | 1500',
+    'cue | PageRunState = | 800',
+    'cue | == UI_S16_ | 800',
   ].join('\n');
   // The prison's own events, for working out more triggers: its buttons,
   // sounds and screens, without the lines that repeat them.
@@ -61,6 +77,34 @@
   // Defaults from earlier versions. Saved settings that are just one of
   // these give way to the defaults above.
   const RETIRED = [
+    [
+      '# kind | pattern | settle ms  (one trigger a line; # starts a note)',
+      '# Tartarus Prison is S16 in the log. A run\'s objective, when it shows one:',
+      'objective | S16BoardTaskPop Run | 1500',
+      '# The pick of 3 instruments, and after a re-roll:',
+      'instruments | S16BoardRelicPop Run | 1500',
+      'instruments | Btn_S16Board_RelicPop_Reroll | 2000',
+      '# Each day, once its banner closes, and after a move, once its cards come up:',
+      'board | \\[S16LastDay\\] check cur=\\d+ max=[1-9] | 1500',
+      'board | UI_S16_Card_Up | 1500',
+      '# After an action in the cell, and after each bite of a consume chain',
+      '# (the next meal to pick, or the board after the chain), once it plays',
+      "# out; unless the day ends, as a new day's banner drops a picture still",
+      '# waiting (skip):',
+      'board | Btn_S16Board_ActionCell | 2000',
+      'board | UI_S16_Click_Eat | 2500',
+      'skip | S16BoardNewDayPop Run | 0',
+      "# The Warden's Treasure, which a Chromatic prisoner opens, and the board",
+      '# once it closes, with the gift taken (a consume can open two in a row):',
+      'treasure | S16BoardColoredPop Run | 1500',
+      'board | S16BoardColoredPop Destory | 600',
+      "# The game's Speed-up button: no picture, it flips 'Speed-up is on' here:",
+      'speed | Btn_S16Board_Top_Speed | 0',
+      '# A Cancel (a consume chain stopped), once the board settles:',
+      'board | UI_S16_Click_Cancel | 1500',
+      "# After an event's Confirm (the Sewer Ratway's cell pick, or the board after it):",
+      'board | Btn_S16Board_EventPop_Confirm | 1500',
+    ].join('\n'),
     [
       '# kind | pattern | settle ms  (one trigger a line; # starts a note)',
       '# Tartarus Prison is S16 in the log. A run\'s objective, when it shows one:',
@@ -210,8 +254,8 @@
   // player's agreement) is written only by the agreement at the bottom.
   // Triggers and the watch pattern are saved only when changed from the
   // defaults, so new defaults reach everyone who didn't change them.
-  const OWN = ['rules', 'watch', 'read', 'speed'];
-  const DEFAULTS = { rules: DEFAULT_RULES, watch: DEFAULT_WATCH, read: true, speed: false };
+  const OWN = ['rules', 'watch', 'read', 'speed', 'early'];
+  const DEFAULTS = { rules: DEFAULT_RULES, watch: DEFAULT_WATCH, read: true, speed: false, early: true };
   const saved = load();
   for (const k of ['rules', 'watch']) if (RETIRED.includes(saved[k])) delete saved[k];
   const prefs = Object.assign({}, DEFAULTS, saved);
@@ -219,7 +263,7 @@
     try {
       const all = load();
       for (const k of OWN) {
-        if (k !== 'read' && k !== 'speed' && prefs[k] === DEFAULTS[k]) delete all[k];
+        if (k !== 'read' && k !== 'speed' && k !== 'early' && prefs[k] === DEFAULTS[k]) delete all[k];
         else all[k] = prefs[k];
       }
       localStorage.setItem(KEY, JSON.stringify(all));
@@ -238,15 +282,17 @@
   if (!agreed) return;
   // #endregion
 
-  // "kind | pattern | settle" lines into triggers.
+  // "kind | pattern | settle | early" lines into triggers. A "cue" line's
+  // number is its early-picture wait (it takes no picture of its own).
   function parseRules(text) {
     const out = [];
     for (const raw of text.split(/\r?\n/)) {
       const line = raw.trim();
       if (!line || line.startsWith('#')) continue;
       const parts = line.split('|').map((s) => s.trim());
-      const [kind, pattern, settle] = parts.length >= 2 ? parts : ['board', parts[0], ''];
-      if (pattern) out.push({ kind: kind || 'board', pattern, settle: Number(settle) || 900, rank: RANK[kind] || 1 });
+      const [kind, pattern, settle, soon] = parts.length >= 2 ? parts : ['board', parts[0], ''];
+      const early = soon === undefined || soon === '' || !Number.isFinite(Number(soon)) ? null : Number(soon);
+      if (pattern) out.push({ kind: kind || 'board', pattern, settle: kind === 'cue' || kind === 'move' ? Number(settle) || 0 : Number(settle) || 900, rank: RANK[kind] || 1, early });
     }
     return out;
   }
@@ -369,12 +415,13 @@
     if (!c.sent) return prefs.read ? 'Sending to the analyzer…' : 'Not read (reading is off).';
     if (!c.read) return 'Sent to the analyzer, reading…';
     if (c.read.skipped) return 'Skipped: a newer picture came in.';
+    if (c.state === 'same') return c.read.treasure ? 'The check: the Warden’s Treasure, advised from the early picture.' : `The check: read day ${c.read.day}, the same board as the early picture.`;
     if (!c.read.ok) return `Not read: ${c.read.reason}`;
     if (c.read.objective) return `The run’s objective: ${c.read.name}, set on the analyzer.`;
     if (c.read.treasure) return `The Warden’s Treasure: ${c.asked ? 'which gift to take is on the analyzer.' : 'set on the analyzer.'}`;
     if (c.read.pick) return `Read the instrument offer: ${c.read.names.join(', ')}${c.read.unsure ? `, ${c.read.unsure} to check` : ''}${c.read.reroll ? ', a re-roll left' : ''}${c.state === 'used' ? ', loaded as a fresh run' : ''}${c.asked ? ', advice given' : ''}.`;
-    const how = c.state === 'used' ? ', loaded' : '';
-    return `Read day ${c.read.day}${c.read.unsure ? `, ${c.read.unsure} to check` : ''} in ${(c.read.ms / 1000).toFixed(1)} s${how}${c.asked ? ', advice given' : ''}.`;
+    const how = c.state === 'used' ? `, loaded${c.check ? ' (it differed from the early picture)' : ''}` : '';
+    return `${c.first ? 'Early picture: read' : 'Read'} day ${c.read.day}${c.read.unsure ? `, ${c.read.unsure} to check` : ''} in ${(c.read.ms / 1000).toFixed(1)} s${how}${c.asked ? ', advice given' : ''}.`;
   }
 
   function renderCaptures() {
@@ -439,7 +486,9 @@
   // js/auto.js). It goes by the browser's BroadcastChannel, which reaches
   // only this site's own pages in this browser. Nothing is uploaded.
   async function onFrame(f) {
-    const c = { id: nextId++, time: f.time, kind: f.kind, hits: f.hits || [], frame: !!f.frame, why: f.why || '', thumb: '', full: '', sent: false, read: null, state: '', asked: false, note: '' };
+    // first: an early picture; check: the usual one after it, of the same
+    // move (js/capture.js).
+    const c = { id: nextId++, time: f.time, kind: f.kind, hits: f.hits || [], frame: !!f.frame, why: f.why || '', thumb: '', full: '', sent: false, read: null, state: '', asked: false, note: '', first: !!f.first, check: !!f.check };
     lastPicture = { at: Date.now(), kind: c.kind, ok: c.frame, why: c.why };
     tell();
     captures.unshift(c);
@@ -478,7 +527,7 @@
           const treasureView = c.kind === 'board' && treasureViewed(c.hits);
           // gifts: the Treasure's counts (Rainbows, picks confirmed).
           // cues: the game's sounds since the picture before (js/cues.js).
-          channel.postMessage({ type: 'frame', to: to.id, from: me, id: c.id, kind: c.kind, fresh, after, treasureView, gifts: Object.assign({}, gifts), pixels: pix, blob, cues: takeHeard() });
+          channel.postMessage({ type: 'frame', to: to.id, from: me, id: c.id, kind: c.kind, fresh, after, treasureView, first: c.first, check: c.check, gifts: Object.assign({}, gifts), pixels: pix, blob, cues: takeHeard() });
           c.sent = true;
         }
       }
@@ -595,6 +644,17 @@
   };
   setSpeed(prefs.speed);
   $('az-auto-speed').addEventListener('change', (e) => setSpeed(e.target.checked));
+  // Early pictures: the board as soon as the log says its animations are
+  // done, then the usual picture to check it. Off: the usual pictures only.
+  const earlyBox = $('az-auto-early');
+  const setEarly = (on) => {
+    prefs.early = !!on;
+    if (earlyBox) earlyBox.checked = prefs.early;
+    if (typeof C.setEarly === 'function') C.setEarly(prefs.early);
+    save();
+  };
+  setEarly(prefs.early);
+  if (earlyBox) earlyBox.addEventListener('change', (e) => setEarly(e.target.checked));
   C.on('hit', (h) => {
     if (h.kind !== 'speed') return;
     setSpeed(!prefs.speed);
@@ -607,7 +667,11 @@
     // Lines of earlier built-in lists, still in a saved list, are left out.
     const retired = new Set(RETIRED.flatMap((text) => parseRules(text).map((r) => r.pattern)));
     for (const r of parseRules(prefs.rules)) if (!retired.has(r.pattern) && !rules.some((x) => x.pattern === r.pattern)) rules.push(r);
-    triggerCount = C.setRules(rules);
+    // A line matches the first trigger it fits: cue and move lines go last,
+    // so one added here isn't hidden by their broad patterns.
+    const quiet = (r) => r.kind === 'cue' || r.kind === 'move';
+    rules.sort((a, b) => quiet(a) - quiet(b));
+    triggerCount = C.setRules(rules) - rules.filter(quiet).length;
     $('az-auto-rules-note').textContent = `${triggerCount} ${triggerCount === 1 ? 'trigger' : 'triggers'} in use (the built-in ones, and any added here).`;
     tell();
   };

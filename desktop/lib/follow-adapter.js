@@ -313,7 +313,8 @@
   C.on('frame', (f) => {
     if (f.settled && typeof D.settled === 'function') D.settled(f.settled);
     onShared(f);
-    lastFrame = { at: Date.now(), kind: f.kind, ok: !!f.frame, why: f.why || '' };
+    // An early picture and the check after it, named so in the debug log.
+    lastFrame = { at: Date.now(), kind: f.first ? `${f.kind} (early)` : f.check ? `${f.kind} (check)` : f.kind, ok: !!f.frame, why: f.why || '' };
     if (!f.frame) diag.failed += 1;
     tell();
     setTimeout(tell, 4000); // what became of it (read, or why not)

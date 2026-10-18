@@ -71,6 +71,12 @@
       // read out of date: back from View Prison Status before that board
       // is read, the Treasure waits for it instead of asking again.
       answer({ read: { ok: true, treasure: true } });
+      // The check after an early picture of the Treasure: it's been
+      // advised already.
+      if (m.check) {
+        answer({ state: 'same' });
+        return;
+      }
       if (viewing) {
         answer({ state: 'used', asked: false });
         return;
@@ -165,6 +171,14 @@
     if (!read.ok && m.treasureView && A.toast) A.toast('The board behind the Warden’s Treasure couldn’t be read from that picture. View it again a little longer, or press Advise with the board as it is.', 'bad');
     // The newest picture wins: an older one still being read is left.
     if (!read.ok || mine !== newest) return;
+    // The check after an early picture (js/capture.js), showing the board
+    // already loaded: nothing changes, and the advice under way goes on (its
+    // sounds wait for the next board). A different board (the early one
+    // caught the move still playing) is loaded and advised as usual.
+    if (m.check && A.sameReading && A.sameReading()) {
+      answer({ state: 'same' });
+      return;
+    }
     A.useReading(cues);
     cues = null;
     if (A.langBoard) A.langBoard(bitmap);

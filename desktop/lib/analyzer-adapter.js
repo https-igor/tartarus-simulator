@@ -80,8 +80,9 @@
     // to an analyzer from before that.
     const has = !!(m.blob || (m.pixels && m.pixels.buffer));
     // cues: the game's sounds since the picture before (js/cues.js), for
-    // tools/cue-replay.js to replay without the log.
-    record({ type: 'picture', id: m.id, kind: m.kind, fresh: !!m.fresh, after: m.after || null, cues: m.cues || null, pending: has });
+    // tools/cue-replay.js to replay without the log. first: an early
+    // picture; check: the usual one after it (js/capture.js).
+    record({ type: 'picture', id: m.id, kind: m.kind, fresh: !!m.fresh, after: m.after || null, cues: m.cues || null, first: !!m.first, check: !!m.check, pending: has });
     if (!has) return;
     const w = { blob: m.blob, pixels: m.pixels, timer: setTimeout(() => savePicture(m.id), 8000) };
     waitingPictures.set(m.id, w);
@@ -118,8 +119,12 @@
     channel.addEventListener('message', (e) => {
       const m = e.data || {};
       if (m.type === 'frame') {
-        reading = { kind: m.kind, at: Date.now() };
-        holdMarks = false;
+        // The check after an early picture is read quietly: the advice and
+        // the marks on the early one stay up unless the board differs.
+        if (!m.check) {
+          reading = { kind: m.kind, at: Date.now() };
+          holdMarks = false;
+        }
         recordPicture(m);
         // The Warden's Treasure's picture: the analyzer reads nothing from
         // it, but the marks need where its cards are.
@@ -131,6 +136,8 @@
         lastRead = { at: Date.now(), ok: !!r.ok, reason: r.reason || '', day: r.day, unsure: r.unsure || 0, pick: !!r.pick, names: r.names || [], objective: !!r.objective, name: r.name || '', treasure: !!r.treasure };
         if (!r.ok) record({ type: 'read', id: m.id, ok: false, reason: r.reason || '', summary: summaryNow() });
         setTimeout(() => savePicture(m.id), 1500); // after the advice's check has started
+      } else if (m.type === 'read' && m.state === 'same') {
+        record({ type: 'same', id: m.id, read: lastRead });
       } else if (m.type === 'read' && m.state === 'used') {
         // The reading is the board now.
         setTimeout(() => {

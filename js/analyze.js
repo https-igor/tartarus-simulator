@@ -3428,6 +3428,9 @@
       },
       // cues: the game's sounds since the board before (js/cues.js).
       useReading: (cues) => useScan(cues || null),
+      // Whether the last picture read is the board as it stands (an early
+      // picture's check showing nothing new).
+      sameReading: () => !!(reader.reading && JSON.stringify(normalize(reader.reading.model)) === JSON.stringify(model)),
       ask: () => ask(true),
       recommendation: () => (fresh() && settled() ? recommendation() : null),
       // The desktop app's marks over the game: the advice on the latest

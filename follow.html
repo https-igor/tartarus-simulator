@@ -424,6 +424,7 @@
       <div class="az-auto-options">
         <label class="toggle"><input type="checkbox" id="az-auto-read"><span><strong>Read each picture into the board</strong><small>The advice refreshes after every move. Cells it's unsure of are marked Check: fix anything wrong in the analyzer and press Recheck.</small></span></label>
         <label class="toggle"><input type="checkbox" id="az-auto-speed"><span><strong>Speed-up is on in the game</strong><small>With the game’s Speed-up (top right of the prison) on, its animations are quicker, so pictures come sooner. Pressing Speed-up in the game flips this by itself.</small></span></label>
+        <label class="toggle"><input type="checkbox" id="az-auto-early"><span><strong>Early pictures</strong><small>A picture of the board as soon as the log says the move has played out, for quicker advice, then the usual one a moment later to check it. Off, only the usual pictures are taken.</small></span></label>
       </div>
       <ol class="az-auto-caps" id="az-auto-caps" aria-live="polite"></ol>
       <details class="az-auto-dev">
@@ -483,7 +484,7 @@
     <h3>4. It watches for moves</h3>
     <p>The triggers are patterns for the lines the game writes when something happens. Each has a kind, the pattern, and a settle time. The built-in ones take a picture at: the run's objective popup; its pick of 3 instruments and each re-roll of it (also an extra pick an objective pays); the start of each day, once the new day's banner closes; after a move, when the cards come up; after an action in the cell, once it has played out; after each bite of a consume chain, and after a Cancel; after an event is confirmed (the Sewer Ratway's cell pick shows then); and the Warden's Treasure, and again once it closes. The Treasure covers the board, so the analyzer waits for it before advising a gift: press View Prison Status in the game, and the picture taken then is of the board behind the Treasure, which still waits; the gift advice uses that board. Two lines take no picture: the next day's banner cancels a picture still waiting, so an action that ends the day takes none of the banner; and the game's Speed-up button switches how soon pictures come. So it takes a picture of each screen where you decide something, and none in between. You can add triggers of your own at the top of this page, under Triggers and log lines; the built-in ones always apply as well.</p>
     <div class="code" data-file="js/follow.js" data-region="default-triggers"></div>
-    <p>When matching lines come in a burst, it waits until the log has been quiet for the settle time, so the animations finish. Then it takes one picture for the whole burst.</p>
+    <p>When matching lines come in a burst, it waits until the log has been quiet for the settle time, so the animations finish. Then it takes one picture for the whole burst. With Early pictures on, a board's picture also goes sooner, at the trigger's early time, once the log's "cue" lines (the game's answer to the move, and the prison's sounds as the board changes) have stopped for long enough; the usual picture still follows, to check it.</p>
     <div class="code" data-file="js/capture.js" data-region="triggers"></div>
 
     <h3>5. It takes one picture of the window you shared</h3>
