@@ -27,7 +27,7 @@
   // every `every` ms; `calm` comparisons in a row under `diff` (mean change
   // of a 0-255 gray level) count as still. Lit portraits flicker a little,
   // hence a margin above 0. Without movement seen, the settle time stands.
-  const STILL = { first: 450, every: 150, diff: 2.5, moved: 8, calm: 2, w: 48, h: 24 };
+  const STILL = { on: false, first: 450, every: 150, diff: 2.5, moved: 8, calm: 2, w: 48, h: 24 };
   const IDB = 'tartarus-sim-capture';
   const listeners = { status: [], hit: [], seen: [], frame: [] };
   // detail: whether the game writes the detail lines the triggers come from
@@ -322,7 +322,10 @@
     burst.prev = null;
     burst.calm = 0;
     const b = burst;
-    burst.still = setTimeout(() => stillTick(b), Math.max(200, STILL.first * pace));
+    // Off for now: in the game's own pictures its animations change the
+    // thumbnails no more than the portraits' flames, so it never cut a wait
+    // short, and its looks added ~0.2 s to each picture.
+    if (STILL.on) burst.still = setTimeout(() => stillTick(b), Math.max(200, STILL.first * pace));
   }
 
   // One look at the shared window while a burst waits: once it has moved and

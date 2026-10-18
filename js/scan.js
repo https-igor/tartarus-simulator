@@ -2048,6 +2048,14 @@
       }
     }
     const office = !!pair;
+    // The pointer over the Replace card (it rises, and the pointer covers
+    // its label) hides that label from the reader. The cards are centred
+    // 237 board units apart: with Consume's red and "End" two cards apart,
+    // the card between them is Replace.
+    if (consume && !replace && !office && redX >= 0 && loc && loc.s) {
+      const slot = 237 * loc.s;
+      if (ends.some((e) => (e.x0 + e.x1) / 2 - redX > 1.5 * slot && (e.x0 + e.x1) / 2 - redX < 2.6 * slot)) replace = true;
+    }
     if (seen) Object.assign(seen, { labels, ends, pair, redX });
     // The Sewer Ratway: the player picks any cell, with no cards.
     if (pickCell && !title) return { ratway: true, replace: false, consume: false, end: false, title: false };
