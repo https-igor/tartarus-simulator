@@ -340,6 +340,8 @@
       // The game's Cancel: a chain can stop after any bite.
       chainStop,
       memo: memoFor(pid, doubleFrom, flags),
+      // swapValue's answers by tier.
+      swapValues: new Map(),
     };
   }
 
@@ -392,13 +394,30 @@
   // stops when no meal is worth eating (stopMargin).
   // The memo key: t and b, the block's size under the Muzzle (the only time
   // it counts), and the counts from tier t up (from Normal under Cage
-  // Fight), made in one call; counts below that are left at 0, so they
-  // never split the memo.
-  const fromCode = String.fromCharCode;
+  // Fight). As a number when it fits: the counts as runs of 0 bits, each
+  // closed by a 1, after a leading 1 (so each list of counts gets its own
+  // number), then t and b, then the block's size, in 12 low bits, all below
+  // 2^53 so exact. Otherwise as a string, which never equals a number.
+  const POW2 = Array.from({ length: 64 }, (_, i) => 2 ** i);
+  function feedKeyText(ctx, t, b, comp, crowd) {
+    let key = `${t}${b}${ctx.muzzle ? `m${crowd}` : ''}`;
+    for (let i = ctx.fight ? 0 : t * 4; i < 20; i++) key += String.fromCharCode(48 + comp[i]);
+    return key;
+  }
   function feedKey(ctx, t, b, comp, crowd) {
-    const lo = ctx.fight ? 0 : t * 4;
-    const c = (i) => (i < lo ? 48 : 48 + comp[i]);
-    return fromCode(48 + t * 4 + b, ctx.muzzle ? 48 + crowd : 0, c(0), c(1), c(2), c(3), c(4), c(5), c(6), c(7), c(8), c(9), c(10), c(11), c(12), c(13), c(14), c(15), c(16), c(17), c(18), c(19));
+    const tb = t * 4 + b;
+    const size = ctx.muzzle ? crowd : 0;
+    if (!(t >= 0 && t < 8 && t === Math.floor(t) && b >= 0 && b < 4 && b === Math.floor(b) && size >= 0 && size < 128 && size === Math.floor(size))) return feedKeyText(ctx, t, b, comp, crowd);
+    let bits = 1;
+    let used = 1;
+    for (let i = ctx.fight ? 0 : t * 4; i < 20; i++) {
+      const c = comp[i];
+      if (!(c >= 0 && c < 41 && c === Math.floor(c))) return feedKeyText(ctx, t, b, comp, crowd);
+      used += c + 1;
+      if (used > 41) return feedKeyText(ctx, t, b, comp, crowd);
+      bits = bits * POW2[c + 1] + 1;
+    }
+    return bits * 4096 + tb * 128 + size;
   }
   function feed(ctx, t, b, comp, crowd) {
     const key = feedKey(ctx, t, b, comp, crowd);
@@ -578,7 +597,15 @@
   // Gaoler's Execution Axe, a higher roll also opens 2 doors. With the
   // Severed Iron Maiden, a roll with as many inmates above it as below it
   // gains 3 tiers.
+  // Kept per context and tier: it reads only the context.
   function swapValue(ctx, tier) {
+    const kept = ctx.swapValues.get(tier);
+    if (kept !== undefined) return kept;
+    const value = swapValueOf(ctx, tier);
+    ctx.swapValues.set(tier, value);
+    return value;
+  }
+  function swapValueOf(ctx, tier) {
     const dist = swapDist(ctx, tier);
     let value = dist.reduce((sum, p, t) => sum + p * (t >= RAINBOW ? ctx.R : ctx.v[t]), 0) - ctx.v[tier];
     if (ctx.axeDoors) value += dist.reduce((sum, p, t) => sum + (t > tier ? p : 0), 0) * ctx.axeDoors * ctx.P.wOpen * ctx.openValue;
@@ -1399,7 +1426,11 @@
     for (const k in v) if (!hasOwn.call(v, k) || !jsonPlain(v[k])) return false;
     return true;
   }
-  const canShare = (st) => jsonPlain(st.params) && jsonPlain(st.eventPool);
+  // Params and pools the solver copied itself (solve's base board), checked
+  // once: they're never written, so they stay JSON-plain.
+  const plainKept = new WeakSet();
+  const plain = (x) => (typeof x === 'object' && x !== null && plainKept.has(x)) || jsonPlain(x);
+  const canShare = (st) => plain(st.params) && plain(st.eventPool);
   function trialClone(st, share) {
     if (!hasOwn.call(st, 'log') || Array.isArray(st) || typeof st.toJSON === 'function') return clone(st);
     const out = { ...st };
@@ -1567,6 +1598,10 @@
     // base is the solver's own copy, made by copyJson: JSON-plain, and
     // nothing writes into its params or event pool.
     const share = canShare(base);
+    if (share) {
+      plainKept.add(base.params);
+      plainKept.add(base.eventPool);
+    }
     const list = candidates(base);
     const random = rng32(o.stream ? (o.seed ^ Math.imul(o.stream, 0x9e3779b1)) >>> 0 : o.seed);
     const pick = list.length ? decide(clone(base), o.params, rng32(o.seed ^ 0x5bd1e995)) : null;
