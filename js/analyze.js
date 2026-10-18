@@ -2978,6 +2978,13 @@
     lines.push(`Instruments read: ${icons.length ? icons.map((t) => `${t.name || t.id} ${Math.round(100 * t.conf)}%`).join(', ') : 'none'}; used: ${rd.tools.length ? rd.tools.map((t) => `${t.name || t.id}${t.kept ? ' (kept)' : ''}`).join(', ') : 'none'}.`);
     lines.push(`Chromatic ${rd.chromatic}${r.chromatic ? '' : ' (panel not found)'}; objective ${(T.OBJECTIVES[model.objective] || { name: model.objective || 'none' }).name}${T.START_EVENTS && T.START_EVENTS[model.startEvent] ? `; start card ${T.START_EVENTS[model.startEvent].name}` : ''}.`);
     if (rd.checks.size) lines.push(`Check: ${[...rd.checks].sort((a, b) => a - b).map(L).join(', ')}.`);
+    // The game's sounds since the board before (Auto Screenshot Mode), and
+    // the prisoners new or risen as read, which they were checked against.
+    if (rd.cues) {
+      const q = rd.cues;
+      const ch = (rd.cueCheck && rd.cueCheck.changed) || [];
+      lines.push(`Heard since the board before: ${q.basic} Normal-to-Rare, ${q.mid} Legendary-or-Supreme, ${q.premium} Chromatic sound${q.bites ? `, ${T.plural(q.bites, 'bite')}` : ''}; new or risen as read: ${ch.length ? ch.map((c) => `${L(c.n)} tier ${c.tier}`).join(', ') : 'none'}${rd.cueCheck && rd.cueCheck.fixes.length ? `; set by the sounds: ${rd.cueCheck.fixes.map((f) => `${L(f.n)} tier ${f.from} → ${f.to}`).join(', ')}` : ''}.`);
+    }
     // What the player has changed since this reading became the board.
     if (shot && reader.loaded === rd) {
       const changes = [];
@@ -3065,9 +3072,18 @@
   }
 
   // Loads the reading as the board. The caller then asks what to do.
-  function useScan() {
+  // cues: the game's sounds since the board before (Auto Screenshot Mode
+  // only, from js/follow.js; see js/cues.js). A prisoner new or risen since
+  // the board before whose rarity doesn't fit them is marked Check, and,
+  // with one prisoner and one sound, moved into the sound's band. A pasted
+  // screenshot has no sounds, and nothing is checked.
+  function useScan(cues) {
     const rd = reader.reading;
     if (!rd) return;
+    if (cues && typeof cues === 'object' && reader.follow && !rd.cues && window.TartarusCues) {
+      rd.cues = cues;
+      rd.cueCheck = window.TartarusCues.apply(rd, model, cues);
+    }
     undo.push({ model: JSON.parse(JSON.stringify(model)), selected, shot });
     if (undo.length > 30) undo.shift();
     leaveShot();
@@ -3410,7 +3426,8 @@
       giftsDone: () => {
         gifts.waiting = 0;
       },
-      useReading: () => useScan(),
+      // cues: the game's sounds since the board before (js/cues.js).
+      useReading: (cues) => useScan(cues || null),
       ask: () => ask(true),
       recommendation: () => (fresh() && settled() ? recommendation() : null),
       // The desktop app's marks over the game: the advice on the latest

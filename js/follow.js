@@ -301,6 +301,11 @@
   // 373). A double-click on Confirm counts once: a pick is its popup
   // opening, then Confirm.
   const gifts = { rainbows: 0, taken: 0 };
+  // The game's sounds since the last picture sent (js/cues.js): the rarity
+  // of each prisoner that showed up or rose, bites, cells re-sealed. They
+  // go with the next picture, for the analyzer to check its reading by.
+  const heard = window.TartarusCues ? window.TartarusCues.collector() : null;
+  const takeHeard = () => (heard ? heard.take() : null);
   let giftOpen = false;
   const burst = { last: 0, base: 0, sounds: 0, cells: new Set() };
 
@@ -448,7 +453,7 @@
       if (c.kind === 'treasure' && prefs.read) {
         const to = target();
         if (to) {
-          channel.postMessage({ type: 'frame', to: to.id, from: me, id: c.id, kind: c.kind, fresh: false, after: treasureAfter(c.hits), gifts: Object.assign({}, gifts), blob: null });
+          channel.postMessage({ type: 'frame', to: to.id, from: me, id: c.id, kind: c.kind, fresh: false, after: treasureAfter(c.hits), gifts: Object.assign({}, gifts), blob: null, cues: takeHeard() });
           c.sent = true;
         }
       }
@@ -472,7 +477,8 @@
           // treasureView: the board, seen while a Warden's Treasure waits.
           const treasureView = c.kind === 'board' && treasureViewed(c.hits);
           // gifts: the Treasure's counts (Rainbows, picks confirmed).
-          channel.postMessage({ type: 'frame', to: to.id, from: me, id: c.id, kind: c.kind, fresh, after, treasureView, gifts: Object.assign({}, gifts), pixels: pix, blob });
+          // cues: the game's sounds since the picture before (js/cues.js).
+          channel.postMessage({ type: 'frame', to: to.id, from: me, id: c.id, kind: c.kind, fresh, after, treasureView, gifts: Object.assign({}, gifts), pixels: pix, blob, cues: takeHeard() });
           c.sent = true;
         }
       }
@@ -513,6 +519,7 @@
   };
   C.on('status', () => soon(renderStatus));
   C.on('seen', (s) => {
+    if (heard) heard.add(s.at, s.line);
     if (/Btn_S16Board_ActionCell/.test(s.line)) lastAction = stampMs(s.at);
     if (/Eating_red_screen/.test(s.line)) lastEat = stampMs(s.at);
     if (/ColoredPop_Confirm/.test(s.line)) {

@@ -79,7 +79,9 @@
     // Auto Screenshot Mode hands over raw pixels (m.pixels), or a PNG (m.blob)
     // to an analyzer from before that.
     const has = !!(m.blob || (m.pixels && m.pixels.buffer));
-    record({ type: 'picture', id: m.id, kind: m.kind, fresh: !!m.fresh, after: m.after || null, pending: has });
+    // cues: the game's sounds since the picture before (js/cues.js), for
+    // tools/cue-replay.js to replay without the log.
+    record({ type: 'picture', id: m.id, kind: m.kind, fresh: !!m.fresh, after: m.after || null, cues: m.cues || null, pending: has });
     if (!has) return;
     const w = { blob: m.blob, pixels: m.pixels, timer: setTimeout(() => savePicture(m.id), 8000) };
     waitingPictures.set(m.id, w);

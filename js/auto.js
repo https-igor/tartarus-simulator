@@ -32,6 +32,12 @@
   let viewing = 0; // boards seen behind a Warden's Treasure, still being read
   let giftsAt = 0; // when the Warden's Treasure last showed, or its counts last moved
   let giftsSeen = '';
+  // The game's sounds that came with pictures since the last board loaded
+  // (js/cues.js): a picture that loads no board (the Warden's Treasure, an
+  // objective, a reading that failed) passes its sounds on to the next one,
+  // and a fresh run's offer drops them.
+  let cues = null;
+  const Cues = window.TartarusCues;
   const say = (m) => {
     if (C.agreed()) channel.postMessage(Object.assign({ id: me }, m));
   };
@@ -40,6 +46,8 @@
 
   async function onPicture(m) {
     const answer = (patch) => channel.postMessage(Object.assign({ type: 'read', to: m.from, id: m.id }, patch));
+    if (Cues && m.cues) cues = Cues.join(cues, m.cues);
+    if (m.kind === 'instruments' && m.fresh) cues = null;
     const before = lastKind;
     lastKind = m.kind;
     // The Treasure's picks still waiting (Opulence gives 3 a Treasure),
@@ -157,7 +165,8 @@
     if (!read.ok && m.treasureView && A.toast) A.toast('The board behind the Warden’s Treasure couldn’t be read from that picture. View it again a little longer, or press Advise with the board as it is.', 'bad');
     // The newest picture wins: an older one still being read is left.
     if (!read.ok || mine !== newest) return;
-    A.useReading();
+    A.useReading(cues);
+    cues = null;
     if (A.langBoard) A.langBoard(bitmap);
     lastBoardAt = Date.now();
     answer({ state: 'used' });
