@@ -41,6 +41,9 @@ contextBridge.exposeInMainWorld('TartarusDesktop', {
   riot: (on) => ipcRenderer.send('site:riot', !!on),
   // A trigger matched (its kind only), for the debug log (follow.html only).
   trigger: (kind) => ipcRenderer.send('site:trigger', String(kind).slice(0, 20)),
+  // The player clicked something in the prison, from the log (follow.html
+  // only): the marks over the game go.
+  clicked: () => ipcRenderer.send('site:clicked'),
   // The run is over (Ignore on the Riot screen), or a new one begins
   // (follow.html only): 'over' or 'new'.
   run: (what) => ipcRenderer.send('site:run', String(what)),

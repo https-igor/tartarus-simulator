@@ -101,7 +101,7 @@
         note(e.message || String(e));
       }
     }
-    if (game.running && !stoppedWindow && st.window !== 'on' && !sharing) {
+    if (game.running && !stoppedWindow && !inRiot && st.window !== 'on' && !sharing) {
       sharing = true;
       try {
         // Windows won't share the game window (a game run as administrator,
@@ -213,13 +213,37 @@
   // one.
   const RUN_OVER = /Btn_S16GamePlay_CheckOut_AbandonChallenge/;
   const RUN_NEW = /Btn_S16GamePlay_Start|S16BoardTaskPop Run|S16BoardRelicPop Run/;
+  // The Riot's fight takes no pictures: the window share stops when its
+  // screen comes up (sharing a window costs the game frames, and the fight
+  // needs them) and starts again back in the prison. The log goes on, to
+  // hear when that is.
+  let inRiot = false;
   const riotWatch = (s) => {
     if (RUN_OVER.test(s.line)) D.run('over');
     else if (RUN_NEW.test(s.line)) D.run('new');
-    if (RIOT.test(s.line)) D.riot(true);
-    else if (PRISON.test(s.line)) D.riot(false);
+    if (RIOT.test(s.line)) {
+      D.riot(true);
+      if (!inRiot) {
+        inRiot = true;
+        if (C.state.window === 'on') C.stopWindow();
+      }
+    } else if (PRISON.test(s.line)) {
+      D.riot(false);
+      if (inRiot) {
+        inRiot = false;
+        retryAt = 0;
+        sync();
+      }
+    }
   };
   C.on('seen', riotWatch);
+  // A click in the prison (a door, a cell, a decision, a Confirm): the
+  // marks over the game are for the screen before, and go at once. Picking
+  // a gift's or an instrument's card keeps them, for its Confirm.
+  const CLICK = /Btn_S16Board_(?!ColoredOptCell|RelicOptCell)\w+/;
+  C.on('seen', (s) => {
+    if (CLICK.test(s.line) && typeof D.clicked === 'function') D.clicked();
+  });
 
   // How Auto Screenshot Mode is doing, for the overlay. Never the log's lines.
   let lastFrame = null;
@@ -279,7 +303,7 @@
       return;
     }
     onSince = 0;
-    if (!C.agreed() || !game.running || game.paused || stoppedWindow || sharing || Date.now() < retryAt) return;
+    if (!C.agreed() || !game.running || game.paused || inRiot || stoppedWindow || sharing || Date.now() < retryAt) return;
     retryAt = Date.now() + retryWait;
     retryWait = Math.min(60000, retryWait * 2);
     sync();
