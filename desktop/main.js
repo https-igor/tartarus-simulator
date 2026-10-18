@@ -1659,6 +1659,8 @@ ipcMain.on('site:advice', (e, data) => {
 // The marks over the game (analyzer only); null clears them.
 ipcMain.on('site:marks', (e, payload) => {
   if (!fromPage(e, 'analyzer') || (payload && !small(payload))) return;
+  // For finding out why marks don't show: what came, in short.
+  note(payload ? `marks: ${(payload.title || '').slice(0, 60)} (${(payload.marks || []).length} marks)${settings.paused ? ', not shown: stopped' : ''}` : 'marks: cleared');
   setMarks(settings.paused ? null : payload);
 });
 

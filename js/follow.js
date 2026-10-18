@@ -254,8 +254,11 @@
   // player's agreement) is written only by the agreement at the bottom.
   // Triggers and the watch pattern are saved only when changed from the
   // defaults, so new defaults reach everyone who didn't change them.
-  const OWN = ['rules', 'watch', 'read', 'speed', 'early'];
-  const DEFAULTS = { rules: DEFAULT_RULES, watch: DEFAULT_WATCH, read: true, speed: false, early: true };
+  const OWN = ['rules', 'watch', 'read', 'speed', 'earlyPics'];
+  // Early pictures are off by default: in play, more than half of them
+  // caught a move still playing, so the board was read and advised twice,
+  // with wrong boards in between.
+  const DEFAULTS = { rules: DEFAULT_RULES, watch: DEFAULT_WATCH, read: true, speed: false, earlyPics: false };
   const saved = load();
   for (const k of ['rules', 'watch']) if (RETIRED.includes(saved[k])) delete saved[k];
   const prefs = Object.assign({}, DEFAULTS, saved);
@@ -263,7 +266,7 @@
     try {
       const all = load();
       for (const k of OWN) {
-        if (k !== 'read' && k !== 'speed' && k !== 'early' && prefs[k] === DEFAULTS[k]) delete all[k];
+        if (k !== 'read' && k !== 'speed' && k !== 'earlyPics' && prefs[k] === DEFAULTS[k]) delete all[k];
         else all[k] = prefs[k];
       }
       localStorage.setItem(KEY, JSON.stringify(all));
@@ -648,12 +651,13 @@
   // done, then the usual picture to check it. Off: the usual pictures only.
   const earlyBox = $('az-auto-early');
   const setEarly = (on) => {
-    prefs.early = !!on;
-    if (earlyBox) earlyBox.checked = prefs.early;
-    if (typeof C.setEarly === 'function') C.setEarly(prefs.early);
+    prefs.earlyPics = !!on;
+    if (earlyBox) earlyBox.checked = prefs.earlyPics;
+    if (typeof C.setEarly === 'function') C.setEarly(prefs.earlyPics);
     save();
   };
-  setEarly(prefs.early);
+  // A new key: the first build saved early pictures on for everyone.
+  setEarly(prefs.earlyPics);
   if (earlyBox) earlyBox.addEventListener('change', (e) => setEarly(e.target.checked));
   C.on('hit', (h) => {
     if (h.kind !== 'speed') return;
