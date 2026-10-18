@@ -1080,8 +1080,12 @@
   // workers (js/solver-pool.js), each playing its share of the rounds, and on
   // this thread otherwise. Moves are scored by the Rainbows vaulted by the
   // end of the run.
+  // Rounds per option, as playouts per check: SOLVER_ROLLOUTS times the
+  // options. Racing (TartarusSolver.solve) drops options clearly behind, and
+  // their playouts go to the contenders, up to RACE_ROUNDS times the rounds.
   const SOLVER_ROLLOUTS = 800;
   const SOLVER_ROLLOUTS_HERE = 300;
+  const RACE_ROUNDS = 3;
   const LIVE_MIN = 150; // playouts per option before the live check leads
   const SWITCH_MIN = 0.05; // Rainbows a live pick must gain over the strategy's to replace it
   const SOLVER_WORKERS = Math.max(1, (navigator.hardwareConcurrency || 2) - 1);
@@ -1191,11 +1195,12 @@
         },
       });
     }
-    if (!solver.pool || !solver.pool.start(id, JSON.parse(JSON.stringify(state)), SOLVER_ROLLOUTS)) solveHere(id, state);
+    const options = Math.max(1, window.TartarusSolver.candidates(state).length);
+    if (!solver.pool || !solver.pool.start(id, JSON.parse(JSON.stringify(state)), SOLVER_ROLLOUTS * RACE_ROUNDS, SOLVER_ROLLOUTS * options)) solveHere(id, state, options);
   }
 
-  function solveHere(id, state) {
-    const job = window.TartarusSolver.solve(JSON.parse(JSON.stringify(state)), { rollouts: SOLVER_ROLLOUTS_HERE, seed: (id * 7919 + 1) >>> 0 });
+  function solveHere(id, state, options) {
+    const job = window.TartarusSolver.solve(JSON.parse(JSON.stringify(state)), { rollouts: SOLVER_ROLLOUTS_HERE * RACE_ROUNDS, playouts: SOLVER_ROLLOUTS_HERE * options, seed: (id * 7919 + 1) >>> 0 });
     const tick = () => {
       if (id !== solver.id) return;
       solver.result = job.step(12);
@@ -1237,11 +1242,18 @@
     const mine = pick && ranked.find((o) => S.sameAction(o.action, pick.action));
     // A better move must also win by a margin worth playing for: shared dice
     // make the paired margin narrow, and a near tie flips the advice.
-    if (mine && (mine === live || live.mean - mine.mean <= Math.max(1.96 * mine.gapSe, SWITCH_MIN))) {
+    if (mine && (mine === live || gapOf(live, mine) <= Math.max(1.96 * mine.gapSe, SWITCH_MIN))) {
       const why = mine === live ? pick.why : `${pick.why} The live check rates it about equal to the best.`;
       return Object.assign({ live: true, rounds: r.rounds }, pick, { label: mine.label, why, option: mine });
     }
     return { action: live.action, label: live.label, why: `The playouts found a better move than the strategy’s pick${pick ? ` (${pick.label})` : ''}.`, live: true, rounds: r.rounds, option: live };
+  }
+
+  // How far an option trails the leader (top, the first option), on the
+  // rounds both played: an option racing dropped has fewer rounds, and its
+  // plain mean is over other dice than the leader's.
+  function gapOf(top, o) {
+    return o === top ? 0 : Number.isFinite(o.gap) ? o.gap : top.mean - o.mean;
   }
 
   function playSolverMove(action) {
@@ -1280,7 +1292,7 @@
       t.last = null;
       return;
     }
-    const loss = Math.max(0, best.mean - chosen.mean);
+    const loss = Math.max(0, gapOf(best, chosen));
     const verdict = window.TartarusSolver.sameAction(chosen.action, best.action) ? 'best' : loss <= Math.max(1.96 * chosen.gapSe, SWITCH_MIN) ? 'close' : 'costly';
     t.moves += 1;
     if (verdict === 'costly') t.lost += loss;
@@ -1291,6 +1303,11 @@
   // An option's expected Rainbows, with its 95% margin.
   function fmtOption(o) {
     return `${o.mean.toFixed(2)}${o.n > 1 ? ` ±${(1.96 * o.se).toFixed(2)}` : ''}`;
+  }
+
+  // Under an option racing dropped: why it has fewer playouts.
+  function prunedText(o) {
+    return `dropped after ${o.n.toLocaleString()} playouts: clearly behind the best, so the rest went to the contenders`;
   }
 
   function renderGrade(st) {
@@ -1367,7 +1384,7 @@
     const top = options[0];
     const second = options[1];
     const max = Math.max(0.01, ...options.map((o) => o.mean));
-    const close = top && second && top.mean - second.mean < Math.max(1.96 * second.gapSe, SWITCH_MIN);
+    const close = top && second && gapOf(top, second) < Math.max(1.96 * second.gapSe, SWITCH_MIN);
     const shown = options.length > 1 ? options : [];
     syncRows(
       $('solver-list'),
@@ -1385,6 +1402,7 @@
         li.option = o;
         const chosen = rec ? S.sameAction(o.action, rec.action) : o === top;
         li.classList.toggle('is-best', chosen);
+        li.classList.toggle('is-pruned', !!o.pruned);
         li.querySelector('.solver-text').textContent = o.label;
         li.querySelector('.solver-tag').hidden = !o.policy;
         li.querySelector('.solver-value').textContent = fmtOption(o);
@@ -1396,6 +1414,7 @@
           const odds = S.chainOdds(st, st.position, o.action.to);
           subText = `chain: ${odds.bites.toFixed(1)} bites on average, ${(100 * odds.rainbow).toFixed(0)}% to Rainbow`;
         }
+        if (o.pruned) subText = subText ? `${subText} · ${prunedText(o)}` : prunedText(o);
         sub.hidden = !subText;
         sub.textContent = subText;
         li.btn.hidden = chosen || shown.length > 6;

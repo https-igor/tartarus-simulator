@@ -4545,3 +4545,10 @@ textarea {
 .az-treasure-wait p {
   max-width: 70ch;
 }
+
+/* An option the live check's racing dropped (js/solver.js raceDrops): it
+   was clearly behind, so it has fewer playouts than the contenders. */
+.solver-row.is-pruned .solver-label,
+.solver-row.is-pruned .solver-value {
+  color: var(--ash);
+}

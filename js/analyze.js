@@ -53,6 +53,11 @@
   // second of the picture, "faster is way better".
   const CLEAR_SE = 3;
   const CHECK_MS = 700;
+  // Racing (TartarusSolver.solve, raceDrops): options clearly behind stop
+  // being played, in each worker and by the merged rows, and their share of
+  // PLAYOUT_BUDGET goes to the contenders, up to RACE_ROUNDS times the
+  // rounds each option would get from an even split.
+  const RACE_ROUNDS = 3;
   const STEPS = ['patrol', 'manage', 'office', 'chain', 'event', 'ratway', 'choice'];
   const STEP_NAMES = { patrol: 'Which door to patrol', manage: 'After the patrol', office: 'Instigate or Bestow', chain: 'A meal to pick, or Cancel', event: 'A special event', ratway: 'Sewer Ratway: any cell', choice: 'A tool or gift' };
   const BEAST_KEYS = { m: 'mammoth', l: 'lion', w: 'wolf', r: 'rat' };
@@ -579,6 +584,7 @@
     const options = S.candidates(st).length;
     const rollouts = clamp(Math.round(PLAYOUT_BUDGET / Math.max(1, options)), 400, 1600);
     solver.target = rollouts;
+    solver.budget = rollouts * Math.max(1, options);
     solver.startedAt = Date.now();
     startCheck(solver.id, st, rollouts);
     render();
@@ -600,7 +606,7 @@
             solver.workers = null;
             solver.shares = null;
             solver.failed = true;
-            if (solver.st) startCheck(solver.id, solver.st, Math.min(rollouts, 300));
+            if (solver.st) startCheck(solver.id, solver.st, rollouts);
           };
           return worker;
         });
@@ -609,16 +615,21 @@
         solver.workers = null;
       }
     }
+    const options = Math.max(1, S.candidates(st).length);
     if (solver.workers) {
-      // Each worker's share of the rounds: together they make `rollouts`.
+      // Each worker's share of the playouts (`rollouts` rounds of every
+      // option in all), with rounds to spare for racing.
       const n = solver.workers.length;
+      const split = (total, k) => Math.floor(total / n) + (k < total % n ? 1 : 0);
       solver.meta = null;
-      solver.shares = solver.workers.map((w, k) => ({ target: Math.floor(rollouts / n) + (k < rollouts % n ? 1 : 0), rounds: 0, done: false, rows: null }));
-      solver.workers.forEach((w, k) => w.postMessage({ id, state, rollouts: solver.shares[k].target, stream: k, raw: true }));
+      solver.shares = solver.workers.map((w, k) => ({ target: split(rollouts * RACE_ROUNDS, k), playouts: Math.max(1, split(rollouts * options, k)), rounds: 0, done: false, rows: null }));
+      solver.workers.forEach((w, k) => w.postMessage({ id, state, rollouts: solver.shares[k].target, playouts: solver.shares[k].playouts, stream: k, raw: true }));
       idleLater();
       return;
     }
-    const job = S.solve(state, { rollouts: Math.min(rollouts, 300), seed: (id * 7919 + 1) >>> 0 });
+    // On this thread: fewer playouts, so the page stays responsive.
+    const here = Math.min(rollouts, 300);
+    const job = S.solve(state, { rollouts: here * RACE_ROUNDS, playouts: here * options, seed: (id * 7919 + 1) >>> 0 });
     const tick = () => {
       if (id !== solver.id) return;
       solver.result = job.step(12);
@@ -638,11 +649,12 @@
     if (m.id !== solver.id || !solver.shares || (solver.result && solver.result.early)) return;
     const share = solver.shares[k];
     if (m.meta && !solver.meta) solver.meta = m.meta;
-    if (!share.rows) share.rows = m.rows.map(() => ({ vals: [], best: 0 }));
+    if (!share.rows) share.rows = m.rows.map(() => ({ vals: [], best: 0, pruned: false }));
     m.rows.forEach((r, i) => {
       const row = share.rows[i];
       for (const v of r.vals) row.vals.push(v);
       row.best = r.best;
+      row.pruned = !!r.pruned;
     });
     share.rounds = m.rounds;
     share.done = m.done;
@@ -660,7 +672,8 @@
     mergeTimer = 0;
     if (!solver.shares || !solver.meta) return;
     const rows = solver.meta.map((meta, i) => {
-      const row = Object.assign({ vals: [], best: 0 }, meta);
+      // Dropped by racing once every worker has dropped it.
+      const row = Object.assign({ vals: [], best: 0, pruned: solver.shares.every((s) => s.rows && s.rows[i] && s.rows[i].pruned) }, meta);
       for (const s of solver.shares) {
         const r = s.rows && s.rows[i];
         if (!r) continue;
@@ -678,6 +691,10 @@
       solver.result.done = true;
       solver.result.early = true;
       idleLater();
+    } else if (!solver.result.done && solver.workers) {
+      // Options the merged rows show clearly behind stop in every worker.
+      const prune = S.raceDrops(rows);
+      if (prune.length) for (const w of solver.workers) w.postMessage({ id: solver.id, prune });
     }
     renderResults();
     renderBoard();
@@ -693,7 +710,7 @@
     if (!r) return false;
     if (r.done || r.options.length <= 1) return true;
     const [top, ...rest] = r.options;
-    if (r.rounds >= LIVE_MIN && rest.every((o) => o.gapSe > 0 && top.mean - o.mean > CLEAR_SE * o.gapSe)) return true;
+    if (r.rounds >= LIVE_MIN && rest.every((o) => o.gapSe > 0 && gapOf(top, o) > CLEAR_SE * o.gapSe)) return true;
     // Out of time: the advice is the check's leader once it has LIVE_MIN
     // playouts each, else the strategy's own pick (recommendation()).
     return Date.now() - solver.startedAt >= CHECK_MS;
@@ -705,17 +722,27 @@
     renderCourt();
   }
   const SPIN = '<span class="az-spin" aria-hidden="true"></span>';
+  // How far an option trails the leader (top, the first option), on the
+  // rounds both played: an option racing dropped has fewer rounds, and its
+  // plain mean is over other dice than the leader's.
+  function gapOf(top, o) {
+    return o === top ? 0 : Number.isFinite(o.gap) ? o.gap : top.mean - o.mean;
+  }
   // The moves being played out, in a steady order while the check runs.
+  // Each has its own count: racing gives the contenders more and stops
+  // the ones clearly behind. `each` is an even split's share.
   function checking() {
     const r = solver.result;
     const moves = r ? r.options.slice() : solver.st ? S.candidates(solver.st) : [];
     moves.sort((a, b) => a.label.localeCompare(b.label));
     const each = solver.target || 0;
-    const done = r ? Math.min(each, r.rounds) : 0;
-    return { moves, each, done, total: each * moves.length, played: done * moves.length };
+    const most = Math.max(each, ...moves.map((o) => o.n || 0));
+    const total = solver.budget || each * moves.length;
+    const played = r ? Math.min(total, r.playouts || r.rounds * moves.length) : 0;
+    return { moves, each, most, total, played };
   }
   // How far the live check has got, 0 to 1.
-  const progress = () => (solver.result && solver.target ? Math.min(1, solver.result.rounds / solver.target) : 0);
+  const progress = () => (solver.result && solver.budget ? Math.min(1, (solver.result.playouts || 0) / solver.budget) : 0);
 
   // On a meal pick ("Select an Inmate to Consume") the choices are a meal or
   // Cancel. When the best move there is not to consume, the advice says
@@ -746,7 +773,7 @@
     // make the paired margin narrow, and a near tie flipped the advice from
     // one screen to the next (report 337: End 2.85 against the strategy's
     // consume at 2.82).
-    if (mine && (mine === live || live.mean - mine.mean <= Math.max(1.96 * mine.gapSe, SWITCH_MIN))) {
+    if (mine && (mine === live || gapOf(live, mine) <= Math.max(1.96 * mine.gapSe, SWITCH_MIN))) {
       const why = mine === live ? pick.why : `${pick.why} The live check rates it about equal to the best.`;
       return Object.assign({ live: true, rounds: r.rounds }, pick, { label: mine.label, why, option: mine });
     }
@@ -998,7 +1025,7 @@
     } else if (working) {
       const c = checking();
       title = 'Working it out…';
-      detail = `${T.plural(c.moves.length, 'move')}, ${c.each.toLocaleString()} games each: ${c.played.toLocaleString()} of ${c.total.toLocaleString()} played`;
+      detail = `${T.plural(c.moves.length, 'move')}: ${c.played.toLocaleString()} of ${c.total.toLocaleString()} games played`;
     } else if (rec) {
       title = rec.label;
       detail = rec.provisional ? 'Provisional: on the board before the Treasure — press View Prison Status to confirm.' : rec.option ? expectText(solver.result.goal, rec.option, solver.st) : 'Checking with playouts…';
@@ -1238,7 +1265,7 @@
     const options = working ? c.moves : r ? r.options : [];
     const status = $('az-res-status');
     if (stale) status.textContent = '';
-    else if (working) status.textContent = `Playing out ${T.plural(c.moves.length, 'move')}, ${c.each.toLocaleString()} games each: ${c.played.toLocaleString()} of ${c.total.toLocaleString()} games played`;
+    else if (working) status.textContent = `Playing out ${T.plural(c.moves.length, 'move')}: ${c.played.toLocaleString()} of ${c.total.toLocaleString()} games played; moves clearly behind stop early, and their games go to the close ones`;
     else if (!r) status.textContent = 'Live check: starting…';
     else if (options.length <= 1) status.textContent = options.length ? 'Only one move here.' : 'Nothing to decide right now.';
     else status.textContent = r.done ? `Live check: ${r.rounds.toLocaleString()} playouts per option` : `Live check: ${r.rounds.toLocaleString()} playouts per option so far…`;
@@ -1267,17 +1294,20 @@
         if (working) {
           // While the check runs: each move with its progress, no scores.
           li.classList.remove('is-best');
+          li.classList.toggle('is-pruned', !!o.pruned);
           li.querySelector('.solver-text').textContent = o.label;
           li.querySelector('.solver-tag').hidden = true;
-          li.querySelector('.solver-value').textContent = `${c.done.toLocaleString()} / ${c.each.toLocaleString()}`;
-          li.querySelector('.solver-value').title = 'Games played out for this move so far';
-          li.querySelector('.solver-meter span').style.width = `${Math.max(2, 100 * (c.each ? c.done / c.each : 0)).toFixed(1)}%`;
+          const n = o.n || 0;
+          li.querySelector('.solver-value').textContent = o.pruned ? `${n.toLocaleString()} · dropped` : n.toLocaleString();
+          li.querySelector('.solver-value').title = o.pruned ? 'Games played out for this move before it fell clearly behind' : 'Games played out for this move so far';
+          li.querySelector('.solver-meter span').style.width = `${Math.max(2, 100 * (c.most ? n / c.most : 0)).toFixed(1)}%`;
           li.querySelector('.solver-sub').hidden = true;
           li.btn.hidden = true;
           return;
         }
         const chosen = rec ? S.sameAction(o.action, rec.action) : o === options[0];
         li.classList.toggle('is-best', chosen);
+        li.classList.toggle('is-pruned', !!o.pruned);
         li.querySelector('.solver-text').textContent = o.label;
         li.querySelector('.solver-tag').hidden = !o.policy;
         const value = li.querySelector('.solver-value');
@@ -1291,6 +1321,11 @@
           const odds = S.chainOdds(st, st.position, o.action.to);
           subText = `chain: ${odds.bites.toFixed(1)} bites on average, ${(100 * odds.rainbow).toFixed(0)}% to Rainbow`;
         }
+        // Racing dropped it: fewer games, and why.
+        if (o.pruned) {
+          const why = `dropped after ${o.n.toLocaleString()} games: clearly behind the best, so the rest went to the close ones`;
+          subText = subText ? `${subText} · ${why}` : why;
+        }
         sub.hidden = !subText;
         sub.textContent = subText;
         li.btn.hidden = chosen || stale;
@@ -1298,7 +1333,7 @@
     );
     const top = options[0];
     const second = options[1];
-    const close = top && second && top.mean - second.mean < Math.max(1.96 * second.gapSe, SWITCH_MIN);
+    const close = top && second && gapOf(top, second) < Math.max(1.96 * second.gapSe, SWITCH_MIN);
     $('az-res-note').textContent = working || shown.length < 2
       ? ''
       : close
