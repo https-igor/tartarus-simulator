@@ -477,7 +477,7 @@
 
   // ---------- Analysis ----------
 
-  const solver = { workers: null, failed: false, id: 0, st: null, key: '', instant: null, result: null, shares: null, meta: null, goal: '' };
+  const solver = { workers: null, failed: false, id: 0, st: null, key: '', instant: null, result: null, shares: null, meta: null, goal: '', provisional: false };
   // The live check runs on a worker for every core but one, or on fewer when
   // the page is told (setCores: the desktop app's processor setting), each
   // playing its share of the rounds with its own dice. It runs for a few
@@ -519,10 +519,14 @@
   // done with, and this one, not seen yet, isn't shared: the next board
   // starts a new run.
   function ask(quiet, fresh) {
-    // A Warden's Treasure waiting for the board behind it: no advice yet.
+    // A Warden's Treasure waiting for the board behind it: a provisional
+    // gift advice on the board as last seen (it may have changed under the
+    // Treasure), never shared, until the board behind it is seen.
     if (model.treasureWait) {
+      const { st, problems } = buildState(model);
       solver.st = null;
-      render();
+      if (problems.length) render();
+      else check(st, true, true);
       return false;
     }
     const { st, problems } = buildState(model);
@@ -556,6 +560,13 @@
       flags = new Set();
     }
     applied = null;
+    return check(st, quiet, false);
+  }
+
+  // Starts the live check on st. provisional: a gift advised before the
+  // board behind the Treasure was seen.
+  function check(st, quiet, provisional) {
+    solver.provisional = provisional;
     solver.id += 1;
     solver.st = st;
     solver.key = modelKey();
@@ -712,6 +723,8 @@
   // 323: "recommended to End day instead of cancel consume").
   function recommendation() {
     const rec = bestMove();
+    // A gift advised before the board behind the Treasure was seen.
+    if (rec && solver.provisional) return Object.assign({}, rec, { provisional: true, label: `Provisional: ${rec.label}`, why: `Provisional: on the board before the Treasure — press View Prison Status to confirm. ${rec.why || ''}`.trim() });
     const rd = reader.reading;
     if (!rec || !rec.action || rec.action.type !== 'end' || !rd || !rd.chain || model.step !== 'manage') return rec;
     return Object.assign({}, rec, { label: 'Cancel the consume, then end the day', why: `Your game shows a meal pick, where a meal or Cancel are the choices. ${rec.why || ''}`.trim() });
@@ -976,7 +989,7 @@
     const rec = fresh() && settled() ? recommendation() : null;
     let title;
     let detail;
-    if (model.treasureWait && !reading) {
+    if (model.treasureWait && !reading && !working && !rec) {
       title = 'The Warden’s Treasure: check the board first';
       detail = 'Press View Prison Status in the game, wait a second on the board, then return. Auto Screenshot Mode reads the board while you look.';
     } else if (reading) {
@@ -988,7 +1001,7 @@
       detail = `${T.plural(c.moves.length, 'move')}, ${c.each.toLocaleString()} games each: ${c.played.toLocaleString()} of ${c.total.toLocaleString()} played`;
     } else if (rec) {
       title = rec.label;
-      detail = rec.option ? expectText(solver.result.goal, rec.option, solver.st) : 'Checking with playouts…';
+      detail = rec.provisional ? 'Provisional: on the board before the Treasure — press View Prison Status to confirm.' : rec.option ? expectText(solver.result.goal, rec.option, solver.st) : 'Checking with playouts…';
     } else {
       const day = `Day ${model.day} of ${model.maxDays}`;
       title = 'Your board';
@@ -1190,7 +1203,7 @@
     // The board changed since this check: its advice was for the board
     // before, so it isn't shown (report 304: a player took the dimmed move
     // for the advice on the new board). Recheck gives the new advice.
-    $('az-res-eyebrow').textContent = stale ? 'The board changed' : 'Recommended';
+    $('az-res-eyebrow').textContent = stale ? 'The board changed' : solver.provisional ? 'Provisional' : 'Recommended';
     // Always through setHTML, which skips what it wrote last: a headline
     // written past it left a new check showing the old move.
     if (stale) setHTML($('az-res-move'), 'Press Recheck for advice on this board');
@@ -1592,6 +1605,49 @@
   const reader = { worker: null, failed: false, id: 0, pending: null, image: null, result: null, reading: null, ms: 0, picks: new Map(), pickId: 0 };
   const SHORT_TIER = ['Normal', 'Magic', 'Rare', 'Legend.', 'Supreme'];
 
+  // ---------- Marks on the picture (the desktop app) ----------
+  // Where the latest picture's cards, cells and buttons are: a board's
+  // (the reader's geometry), or a Treasure's or an offer's cards
+  // (TartarusScan.choiceLayout). marks() turns the advice into marks on
+  // it (js/marks.js) for the app to draw over the game. n: the picture's
+  // order, so a late answer for an older picture is dropped.
+  const view = { seq: 0, n: 0, width: 0, height: 0, geometry: null, layout: null };
+  const marked = { key: '', id: 0 };
+  function setView(n, width, height, geometry, layout) {
+    if (n < view.n) return;
+    Object.assign(view, { n, width, height, geometry: geometry || null, layout: layout || null });
+  }
+  // A Warden's Treasure's picture (Auto Screenshot Mode's raw pixels, or a
+  // pasted picture's): where its cards are, from the reader's worker.
+  function seeChoice(imageData) {
+    const n = ++view.seq;
+    setView(n, imageData.width, imageData.height, null, null);
+    const done = (layout) => setView(n, imageData.width, imageData.height, null, layout);
+    reader.pickId += 1;
+    const id = `layout${reader.pickId}`;
+    if (readerWorker()) {
+      reader.picks.set(id, done);
+      const copy = imageData.data.slice().buffer;
+      reader.worker.postMessage({ id, kind: 'layout', choice: 'treasure', width: imageData.width, height: imageData.height, buffer: copy }, [copy]);
+      return;
+    }
+    loadReader(false)
+      .then(() => done(window.TartarusScan.choiceLayout ? window.TartarusScan.choiceLayout(imageData, 'treasure') : null))
+      .catch(() => done(null));
+  }
+  function marks() {
+    const rec = !reading && fresh() && settled() ? recommendation() : null;
+    const M = window.TartarusMarks;
+    const p = rec && M && view.n ? M.fromAdvice(rec, view.geometry, view.layout, model, { width: view.width, height: view.height, provisional: !!solver.provisional }) : null;
+    if (!p) return null;
+    const key = JSON.stringify(p);
+    if (key !== marked.key) {
+      marked.key = key;
+      marked.id += 1;
+    }
+    return Object.assign(p, { id: marked.id });
+  }
+
   // A notice pinned to the window while a screenshot is read, so a paste
   // shows it's working wherever the page is scrolled. kind: busy, ok or bad.
   // A sticky one stays until it's answered.
@@ -1735,6 +1791,7 @@
     reader.follow = !!o.quiet;
     reader.id += 1;
     const id = reader.id;
+    const n = ++view.seq;
     const t0 = performance.now();
     setReading(true);
     const done = (result, error) => {
@@ -1743,6 +1800,8 @@
         if (o.onRead) o.onRead({ ok: false, skipped: true, reason: 'a newer picture came in' });
         return;
       }
+      // A board's cells and buttons in the picture (none for other screens).
+      setView(n, imageData.width, imageData.height, result && result.ok ? result.geometry : null, null);
       reader.ms = Math.round(performance.now() - t0);
       if (error || !result) {
         reader.result = null;
@@ -1808,7 +1867,7 @@
       try {
         reader.worker = new Worker(`js/scan-worker.js${SCRIPT_QUERY}`);
         reader.worker.onmessage = (e) => {
-          if (e.data.kind === 'pick' || e.data.kind === 'objective') {
+          if (e.data.kind === 'pick' || e.data.kind === 'objective' || e.data.kind === 'layout') {
             const answer = reader.picks.get(e.data.id);
             reader.picks.delete(e.data.id);
             if (answer) answer(e.data.result, e.data.error);
@@ -2140,7 +2199,18 @@
       const n = letters(T.GIFTS[id].name);
       return lines.some((l) => l.includes(n) || editDistance(l, n) / n.length <= 0.3);
     });
-    return { ok: header || gifts.length >= 2, treasure: true, header, gifts };
+    const ok = header || gifts.length >= 2;
+    // Its cards in the picture, for the desktop app's marks.
+    if (ok) {
+      const scaled = Math.min(1, 2600 / source.width);
+      const full = document.createElement('canvas');
+      full.width = Math.round(source.width * scaled);
+      full.height = Math.round(source.height * scaled);
+      const ctx = full.getContext('2d', { willReadFrequently: true });
+      ctx.drawImage(source, 0, 0, full.width, full.height);
+      seeChoice(ctx.getImageData(0, 0, full.width, full.height));
+    }
+    return { ok, treasure: true, header, gifts };
   }
 
   // A pasted picture with no board in it: the instrument pick, or the
@@ -2187,7 +2257,7 @@
           names.forEach((n, i) => {
             if (n && cards[i]) Object.assign(cards[i], { sim: n.id, name: T.toolName(n.id), conf: 1, by: 'name' });
           });
-          resolve({ ok: true, pick: true, cards, names: cards.map((c) => c.name), unsure: cards.filter((c) => c.conf < 0.5).length, reroll: !!result.reroll, byName: cards.filter((c) => c.by === 'name').length, ocrFailed: names.failed || '', ms: Math.round(performance.now() - t0) });
+          resolve({ ok: true, pick: true, cards, names: cards.map((c) => c.name), unsure: cards.filter((c) => c.conf < 0.5).length, reroll: !!result.reroll, byName: cards.filter((c) => c.by === 'name').length, ocrFailed: names.failed || '', ms: Math.round(performance.now() - t0), layout: result.layout || null, width: w, height: h });
         });
       };
       reader.pickId += 1;
@@ -2199,7 +2269,15 @@
         return;
       }
       loadReader(true)
-        .then(() => done(window.TartarusScan.scanPick(imageData, window.TARTARUS_SCAN, window.TARTARUS_PICK)))
+        .then(() => {
+          const result = window.TartarusScan.scanPick(imageData, window.TARTARUS_SCAN, window.TARTARUS_PICK);
+          try {
+            if (result && window.TartarusScan.choiceLayout) result.layout = window.TartarusScan.choiceLayout(imageData, 'instruments');
+          } catch (e) {
+            // No marks for this offer.
+          }
+          done(result);
+        })
         .catch((e) => done(null, (e && e.message) || 'the screenshot reader could not load'));
     });
   }
@@ -2232,6 +2310,8 @@
       selected = model.warden;
     }
     if (start) gifts.waiting = 0;
+    // The offer's cards in its picture, for the desktop app's marks.
+    setView(++view.seq, read.width || 0, read.height || 0, null, read.layout);
     model.step = 'choice';
     model.choice = { kind: 'tool', options: read.cards.map((c) => c.sim), rerolls: read.reroll ? 1 : 0 };
     applied = null;
@@ -2339,7 +2419,9 @@
     model.treasureSeen = false;
     changed();
     renderScan();
-    toast(`The Warden’s Treasure is open.${how} To advise a gift on the board as it is now, press View Prison Status in the game, wait a second on the board, then return to the Treasure.`, 'ok');
+    // A provisional gift advice at once, on the board as last seen.
+    ask(true);
+    toast(`The Warden’s Treasure is open.${how} A provisional gift advice, on the board before the Treasure, follows below. To confirm it on the board as it is now, press View Prison Status in the game, wait a second on the board, then return to the Treasure.`, 'ok');
     return false;
   }
 
@@ -3319,6 +3401,13 @@
       useReading: () => useScan(),
       ask: () => ask(true),
       recommendation: () => (fresh() && settled() ? recommendation() : null),
+      // The desktop app's marks over the game: the advice on the latest
+      // picture (js/marks.js), or null. seeChoice: a Warden's Treasure's
+      // picture ({ width, height, buffer }), for where its cards are.
+      marks: () => marks(),
+      seeChoice: (p) => {
+        if (p && p.buffer && p.width && p.height) seeChoice({ width: p.width, height: p.height, data: new Uint8ClampedArray(p.buffer) });
+      },
       // What the reader made of the last picture, in full (the desktop app's
       // test record keeps it).
       readingSummary: () => (reader.result && reader.image ? readingSummary(true) : ''),

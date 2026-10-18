@@ -10,8 +10,19 @@ importScripts(`scan.js${self.location.search}`, `scan-data.js${self.location.sea
 // (Auto Screenshot Mode's frames of one window) looks there first.
 const cache = {};
 
+// Where a Treasure's or an offer's cards are, for the desktop app's marks
+// (null when this reader can't tell). choice: 'treasure' or 'instruments'
+// when known, else told from the screen.
+const layoutOf = (img, choice) => {
+  try {
+    return self.TartarusScan.choiceLayout ? self.TartarusScan.choiceLayout(img, choice) : null;
+  } catch (e) {
+    return null;
+  }
+};
+
 self.onmessage = (e) => {
-  const { id, kind, width, height, buffer, lang } = e.data;
+  const { id, kind, width, height, buffer, lang, choice } = e.data;
   try {
     const img = { width, height, data: new Uint8ClampedArray(buffer) };
     if (kind === 'objective') {
@@ -19,7 +30,13 @@ self.onmessage = (e) => {
       return;
     }
     if (kind === 'pick') {
-      self.postMessage({ id, kind, result: self.TartarusScan.scanPick(img, self.TARTARUS_SCAN, self.TARTARUS_PICK) });
+      const result = self.TartarusScan.scanPick(img, self.TARTARUS_SCAN, self.TARTARUS_PICK);
+      if (result) result.layout = layoutOf(img, 'instruments');
+      self.postMessage({ id, kind, result });
+      return;
+    }
+    if (kind === 'layout') {
+      self.postMessage({ id, kind, result: layoutOf(img, choice) });
       return;
     }
     // Instruments' panel icons from labeled live screenshots ride along.

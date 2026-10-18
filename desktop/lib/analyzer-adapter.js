@@ -118,6 +118,10 @@
       if (m.type === 'frame') {
         reading = { kind: m.kind, at: Date.now() };
         recordPicture(m);
+        // The Warden's Treasure's picture: the analyzer reads nothing from
+        // it, but the marks need where its cards are.
+        const A = window.TartarusAnalyzer;
+        if (m.kind === 'treasure' && m.pixels && A && typeof A.seeChoice === 'function') A.seeChoice(m.pixels);
       } else if (m.type === 'read' && m.read) {
         reading = null;
         const r = m.read;
@@ -201,8 +205,27 @@
   let last = '';
   let timer = 0;
   let advised = ''; // the advice last put in the record, with its board
+  // The marks over the game window (TartarusAnalyzer.marks()): the advice
+  // on the latest picture, null once it clears or goes stale. Sent when
+  // they change.
+  let lastMarks = '';
+  function postMarks() {
+    if (typeof D.marks !== 'function') return;
+    const A = window.TartarusAnalyzer;
+    let p = null;
+    try {
+      p = A && typeof A.marks === 'function' ? A.marks() : null;
+    } catch (e) {
+      p = null;
+    }
+    const key = p ? JSON.stringify(p) : '';
+    if (key === lastMarks) return;
+    lastMarks = key;
+    D.marks(p);
+  }
   function post() {
     timer = 0;
+    postMarks();
     const s = snapshot();
     const key = JSON.stringify(s);
     if (key === last) return;
