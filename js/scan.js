@@ -1621,14 +1621,19 @@
   // letters (and the eye icon after them), where the board otherwise shows
   // "Chromatic Prisoner", 9 and 8 (report 325: a pasted status view taken
   // for a plain board).
-  function readStatusView(img, loc) {
+  // seen: an object to fill with the button's label (its piece and line
+  // height), for the eye's box.
+  function readStatusView(img, loc, seen) {
     const right = Math.max(at(loc, 5, 0)[0], at(loc, 5, 3)[0]) + 60 * loc.s;
     if (right > img.width - 30) return false;
     for (const r of textRadii(img)) {
       for (const line of textLines(img, right, 0, img.width - 1, Math.round(img.height / 2), { minH: 6, maxH: Math.max(40, img.height * 0.06), r, s: 0.5 })) {
         for (const p of line.pieces) {
           const w = p.words.map((q) => q.glyphs.length);
-          if (w.length >= 3 && Math.abs(w[0] - 6) + Math.abs(w[1] - 2) + Math.abs(w[2] - 9) <= 2) return true;
+          if (w.length >= 3 && Math.abs(w[0] - 6) + Math.abs(w[1] - 2) + Math.abs(w[2] - 9) <= 2) {
+            if (seen) Object.assign(seen, { x0: p.x0, x1: p.x1, y0: p.y0, y1: p.y1, h: line.h });
+            return true;
+          }
         }
       }
     }
@@ -1908,8 +1913,9 @@
   // "Make Your Decision", after a move: a row of cards under the board, one
   // for each action the game allows now. Replace and End have pale labels;
   // the Consume card is red all over, its label too. Returns which cards
-  // show, or null when there's no such row.
-  function readDecision(img, loc) {
+  // show, or null when there's no such row. seen: an object to fill with
+  // where the labels were found, for the cards' boxes (decisionBoxes).
+  function readDecision(img, loc, seen) {
     const bottom = Math.max(at(loc, 0, 3)[1], at(loc, 5, 3)[1]) + 30 * loc.s;
     if (bottom >= img.height - 20) return null;
     const x0 = Math.max(0, Math.min(at(loc, 0, 0)[0], at(loc, 0, 3)[0]) - 40 * loc.s);
@@ -1954,7 +1960,7 @@
           else if (p.words.length === 1 && n >= 6 && n <= 8 && span > 3 && span < 6.5) labels.push({ x0: p.x0, x1: p.x1, mid: line.mid, h: line.h });
           else if (n === 3 && span > 1.5 && span < 3.2) {
             end = true;
-            if (p.words.length === 1) ends.push({ x0: p.x0, mid: line.mid, h: line.h });
+            if (p.words.length === 1) ends.push({ x0: p.x0, x1: p.x1, mid: line.mid, h: line.h });
           }
           // Another card's label, for a row seen without its title.
           if (n >= 6 && n <= 13 && span > 3 && span < 8) lefts.push({ x1: p.x1, mid: line.mid });
@@ -2032,8 +2038,17 @@
     }
     // The office: "Instigate" with "Bestow" to its right on the same line,
     // neither on the Consume card's red (its jaws can read as a long word).
-    const office = single.some((a) => a.n >= 8 && a.n <= 10 && a.span > 4.3 && a.span < 6.5 && redBy(a) < 0.01
-      && single.some((b) => b.n >= 5 && b.n <= 6 && b.span > 3.3 && b.span < 5.5 && b.x0 > a.x1 && Math.abs(b.mid - a.mid) < a.h / 2 && redBy(b) < 0.01));
+    let pair = null;
+    for (const a of single) {
+      if (!(a.n >= 8 && a.n <= 10 && a.span > 4.3 && a.span < 6.5 && redBy(a) < 0.01)) continue;
+      const b = single.find((q) => q.n >= 5 && q.n <= 6 && q.span > 3.3 && q.span < 5.5 && q.x0 > a.x1 && Math.abs(q.mid - a.mid) < a.h / 2 && redBy(q) < 0.01);
+      if (b) {
+        pair = [a, b];
+        break;
+      }
+    }
+    const office = !!pair;
+    if (seen) Object.assign(seen, { labels, ends, pair, redX });
     // The Sewer Ratway: the player picks any cell, with no cards.
     if (pickCell && !title) return { ratway: true, replace: false, consume: false, end: false, title: false };
     // Without its title, a stray short word isn't a row of cards. A row
@@ -2045,6 +2060,169 @@
     if (!title && !(row && (consume || replace))) return null;
     if (office) return { office: true, replace: false, consume: false, end: false, title };
     return { replace, consume, end, title, red: Math.round(1000 * red) / 1000 };
+  }
+
+  // ---------- Where things are, for marks over the game ----------
+
+  // Boxes as { x, y, w, h } (top-left and size, whole pixels).
+  const rect = (x0, y0, x1, y1) => ({ x: Math.round(x0), y: Math.round(y0), w: Math.round(x1 - x0), h: Math.round(y1 - y0) });
+
+  // A cell's portrait (or its door, on a locked one) sits above its padlock
+  // spot: the portrait runs 70 units over it (the jaws on top) down to its
+  // frame's tip at 4 (readCell, frameRarity), the room about 50 to either
+  // side. A circle 40 units over the spot, 46 across, takes in both.
+  const CELL_RING = { up: 40, r: 46 };
+
+  // A card under the board, a door ("Go to Cell N") or a decision
+  // (Consume, Replace, End; Instigate, Bestow): all of one size, in a row
+  // centered under the board, their texts on the same line near their
+  // foot. In board units (loc.s) about that text's middle: 228 wide, every
+  // 237, from 91 over it to 29 under (2560x1300 pictures, 3 and 2 cards).
+  const CARD = { w: 228, pitch: 237, up: 91, down: 29, below: 177 };
+  const cardRect = (loc, cx, mid) => rect(cx - (CARD.w / 2) * loc.s, mid - CARD.up * loc.s, cx + (CARD.w / 2) * loc.s, mid + CARD.down * loc.s);
+
+  // The decision row's cards, left to right, as boxes by name. The row
+  // stands centered under the board, its labels at their usual height. A
+  // label found where its card should be (half a card off at most) places
+  // that card's text line, and the row a little sideways; one found off its
+  // place (the cards' studs and icons can pass for short words) doesn't
+  // count. anchors: the labels by card name; loose: labels whose card isn't
+  // known (each counts for the card it is nearest).
+  function decisionBoxes(loc, names, anchors, loose) {
+    const n = names.length;
+    const pitch = CARD.pitch * loc.s;
+    const slot = (i) => (i - (n - 1) / 2) * pitch;
+    const [bx, by] = at(loc, 2.5, 3);
+    const mids = {};
+    let shift = 0;
+    let k = 0;
+    const take = (i, l, reach) => {
+      const dx = (l.x0 + l.x1) / 2 - (bx + slot(i));
+      if (Math.abs(dx) > reach * pitch || Math.abs(l.mid - (by + CARD.below * loc.s)) > 40 * loc.s) return;
+      shift += dx;
+      k += 1;
+      mids[names[i]] = l.mid;
+    };
+    names.forEach((name, i) => {
+      if (anchors[name]) take(i, anchors[name], 0.5);
+    });
+    if (!k) {
+      for (const l of loose || []) {
+        const i = names.reduce((m, _, j) => (Math.abs((l.x0 + l.x1) / 2 - bx - slot(j)) < Math.abs((l.x0 + l.x1) / 2 - bx - slot(m)) ? j : m), 0);
+        if (!mids[names[i]]) take(i, l, 0.25);
+      }
+    }
+    const cx = bx + (k ? shift / k : 0);
+    const found = Object.values(mids);
+    const mid = found.length ? found.reduce((a, m) => a + m, 0) / found.length : by + CARD.below * loc.s;
+    const out = {};
+    names.forEach((name, i) => {
+      out[name] = cardRect(loc, cx + slot(i), mids[name] || mid);
+    });
+    return out;
+  }
+
+  // Round buttons kept at the screen's right edge, in units of a 1080-unit
+  // high screen (as the instrument pick's): the meal pick's Cancel, under
+  // Quick Action, and the eye after "View Prison Status".
+  const CANCEL = { right: 197, y: 802, r: 69 };
+
+  // Where the reader saw what it read, in the picture's pixels (see the
+  // contract in sandbox/OVERLAY-CONTRACT.md): every cell, the door cards,
+  // the decision row's cards, the meal pick's Cancel, the status view's eye.
+  // seen: labels readDecision and readStatusView found.
+  function boardGeometry(img, loc, doors, decision, chain, statusView, seen) {
+    const cells = RING.map(([u, v], n) => {
+      const [x, y] = at(loc, u, v);
+      const k = scaleAt(loc, u, v);
+      return { n, x: Math.round(x), y: Math.round(y - CELL_RING.up * k), r: Math.round(CELL_RING.r * k) };
+    });
+    // A door card's text is centered on its card.
+    const doorBoxes = doors ? doors.boxes.map((b, i) => Object.assign({ cell: doors.cells.length === doors.boxes.length ? doors.cells[i] : null }, cardRect(loc, (b[0] + b[2]) / 2, (b[1] + b[3]) / 2))) : [];
+    const d = seen.decision || {};
+    let dec = {};
+    let office = {};
+    // Labels as tall as a label's letters (about 13 board units), not
+    // the cards' studs.
+    const tall = (l) => l && l.h >= 9 * loc.s;
+    if (decision && decision.office) {
+      const p = d.pair;
+      office = decisionBoxes(loc, ['instigate', 'bestow'], p ? { instigate: p[0], bestow: p[1] } : {}, (d.labels || []).concat(d.ends || []).filter(tall));
+    } else if (decision && !decision.ratway) {
+      const names = ['consume', 'replace', 'end'].filter((k) => decision[k]);
+      // Replace's label is pale, Consume's red; End is one short word.
+      const labels = (d.labels || []).filter(tall);
+      const anchors = { replace: labels.find((l) => l.red < 0.01), consume: labels.find((l) => l.red >= 0.01), end: (d.ends || []).filter(tall)[0] };
+      if (names.length) dec = decisionBoxes(loc, names, anchors);
+    }
+    const u = img.height / 1080;
+    const cancel = chain ? rect(img.width - (CANCEL.right + CANCEL.r) * u, (CANCEL.y - CANCEL.r) * u, img.width - (CANCEL.right - CANCEL.r) * u, (CANCEL.y + CANCEL.r) * u) : null;
+    // The eye just after "Return to Selection", as big as about two lines.
+    const v = seen.view;
+    const view = statusView && v && v.h ? rect(v.x1 + 0.4 * v.h, (v.y0 + v.y1) / 2 - 1.3 * v.h, v.x1 + 3 * v.h, (v.y0 + v.y1) / 2 + 1.3 * v.h) : null;
+    return { width: img.width, height: img.height, cells, doors: doorBoxes, decision: dec, office, cancel, view };
+  }
+
+  // The full-screen choices that aren't a board: the Warden's Treasure (four
+  // gift cards, Confirm, and "View Prison Status" with its eye at the top
+  // right) and the instrument offer (three cards, Confirm). Fixed places, in
+  // units of a 1080-unit high screen centered on the picture's width (the
+  // cards keep to the middle, the eye to the right edge), measured on
+  // 2560x1300 pictures (the Treasure's row sits 5 units right of the
+  // middle). kind: 'treasure' or 'instruments' when the caller
+  // knows it (the game's log), else told by the screen's text, else null
+  // with no boxes. view: the eye after "View Prison Status", on the
+  // Treasure and wherever its words show.
+  const CHOICE = {
+    treasure: { n: 4, pitch: 438, w: 418, top: 179, bottom: 872, dx: 5 },
+    instruments: { n: 3, pitch: 480, w: 455, top: 181, bottom: 874, dx: 0 },
+    confirm: { w: 324, top: 925, bottom: 995 },
+    eye: { right: 84, y: 135, r: 32 },
+  };
+  function choiceLayout(img, kind) {
+    const u = img.height / 1080;
+    const W = img.width;
+    const seen = choiceKind(img);
+    if (kind !== 'treasure' && kind !== 'instruments') kind = seen.kind;
+    const out = { width: W, height: img.height, kind: kind || null, cards: [], confirm: null, view: null };
+    if (!kind) return out;
+    const c = CHOICE[kind];
+    const bottom = img.height - 1080 * u;
+    for (let i = 0; i < c.n; i++) {
+      const cx = W / 2 + ((i - (c.n - 1) / 2) * c.pitch + c.dx) * u;
+      out.cards.push(rect(cx - (c.w / 2) * u, c.top * u, cx + (c.w / 2) * u, c.bottom * u));
+    }
+    out.confirm = rect(W / 2 - (CHOICE.confirm.w / 2) * u, bottom + CHOICE.confirm.top * u, W / 2 + (CHOICE.confirm.w / 2) * u, bottom + CHOICE.confirm.bottom * u);
+    if (kind === 'treasure' || seen.eye) {
+      const e = CHOICE.eye;
+      out.view = rect(W - (e.right + e.r) * u, (e.y - e.r) * u, W - (e.right - e.r) * u, (e.y + e.r) * u);
+    }
+    return out;
+  }
+
+  // Which choice is up, by its text, and whether "View Prison Status"
+  // shows at the top right (words of 4, 6 and 6 letters, the eye after them
+  // often read as a fourth): the Treasure has it, and an instrument reward
+  // in mid-run too. The offer's title ends in "a Torture Instrument" (1, 6
+  // or 7, 10: "Select a Torture Instrument", "Complete objectives to select
+  // a Torture Instrument reward"), which the Treasure's ("Prisoner rarity
+  // reached Chromatic. Warden's Treasure obtained.") never reads as.
+  function choiceKind(img) {
+    const u = img.height / 1080;
+    const W = img.width;
+    const near = (w, want) => w.length === want.length && w.reduce((a, n, i) => a + Math.abs(n - want[i]), 0) <= 3;
+    const words = (x0, y0, x1, y1) => {
+      const out = [];
+      for (const r of textRadii(img).slice(0, 2)) {
+        for (const line of textLines(img, x0, y0, x1, y1, { minH: 6, maxH: Math.max(40, img.height * 0.05), r, s: 0.5 })) {
+          for (const p of line.pieces) out.push(p.words.map((q) => q.glyphs.length));
+        }
+      }
+      return out;
+    };
+    const eye = words(W - 420 * u, 95 * u, W - 20 * u, 175 * u).some((w) => w.length <= 4 && near(w.slice(0, 3), [4, 6, 6]));
+    const offer = words(W / 2 - 500 * u, 70 * u, W / 2 + 500 * u, 140 * u).some((w) => w.some((n, i) => n === 1 && Math.abs(w[i + 1] - 6.5) <= 1 && Math.abs(w[i + 2] - 10) <= 1));
+    return { kind: offer ? 'instruments' : eye ? 'treasure' : null, eye };
   }
 
   // ---------- Everything ----------
@@ -2081,7 +2259,8 @@
     const tools = readTools(img, loc, ref);
     const badge = readBadge(img, tools.label, ref);
     const chromatic = readChromatic(img, loc);
-    const statusView = !doors && readStatusView(img, loc);
+    const seen = { view: {}, decision: {} };
+    const statusView = !doors && readStatusView(img, loc, seen.view);
     const objective = objectiveBox(img, loc, tools);
     const chain = readChainScreen(img, loc, cells, warden);
     // A meal pick darkens the board, most at its red sides, where a padlock
@@ -2106,7 +2285,7 @@
       const t = b[2] > b[1] ? 2 : 1;
       if (b[t] >= 0.025 * c.frame.samples) c.tier = t;
     }
-    const decision = doors || chain ? null : readDecision(img, loc);
+    const decision = doors || chain ? null : readDecision(img, loc, seen.decision);
     // The warden in the office: no inmate there to Replace or Consume, so a
     // row of cards is the office's Instigate and Bestow, whatever its labels
     // read as (report 67: "Instigate" came apart, and "Bestow" passed for
@@ -2115,10 +2294,12 @@
     // "Select an Objective": the cells it frames, to pick from.
     if (decision && decision.ratway) decision.framed = cells.filter((c) => c.n > 0 && framedCell(img, c)).map((c) => c.n);
     if (!warden) notes.push('The warden’s arrow was not found.');
-    return { ok: true, loc, cells, warden, doors, days, tools, badge, chromatic, objective, chain, decision, statusView, notes, ms: Date.now() - t0 };
+    // geometry: where all that is, for marks drawn over the game.
+    const geometry = boardGeometry(img, loc, doors, decision, chain, statusView, seen);
+    return { ok: true, loc, cells, warden, doors, days, tools, badge, chromatic, objective, chain, decision, statusView, notes, geometry, ms: Date.now() - t0 };
   }
 
-  const api = { scan, scanPick, pickArtBox, pickRerollShown, locateBoard, readCell, findWarden, findToolIcons, readDoors, readDays, doorCards, dayNumber, prefixVector, textLines, glyphVector, faceVector, artFeature, similarity, hsv, blobs, at, gridOf, scaleAt, grayOf, blur, RING, H0, ARROW, FACE, GLYPH, locateByLabels, readChainScreen, readDecision, readObjectiveTitle, withPanelIcons, badgeBox, readBadge };
+  const api = { scan, scanPick, choiceLayout, boardGeometry, pickArtBox, pickRerollShown, locateBoard, readCell, findWarden, findToolIcons, readDoors, readDays, doorCards, dayNumber, prefixVector, textLines, glyphVector, faceVector, artFeature, similarity, hsv, blobs, at, gridOf, scaleAt, grayOf, blur, RING, H0, ARROW, FACE, GLYPH, locateByLabels, readChainScreen, readDecision, readObjectiveTitle, withPanelIcons, badgeBox, readBadge };
   if (typeof module === 'object' && module.exports) module.exports = api;
   root.TartarusScan = api;
 })(typeof window !== 'undefined' ? window : typeof self !== 'undefined' ? self : globalThis);
