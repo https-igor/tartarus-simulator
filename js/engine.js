@@ -1079,14 +1079,40 @@
     return state.phase === 'patrol' ? state.destinations.slice() : [];
   }
 
+  // canEat(state, eater, meal) for one eater and many meals, with what
+  // depends only on the eater and the tools worked out once.
+  function eaterOf(state, eater) {
+    return {
+      eater,
+      meals: eatsOf(state, eater.beast, eater.tier),
+      skewer: eater.beast === 'rat' && has(state, 'skewer'),
+      fight: cageFight(state),
+      maul: eater.beast === 'mammoth' && has(state, 'maul'),
+      guillotine: eater.beast === 'wolf' && has(state, 'guillotine'),
+      crown: eater.beast === 'lion' && has(state, 'crown'),
+    };
+  }
+  function eaterCanEat(state, e, meal) {
+    const eater = e.eater;
+    if (!meal || eater.id === meal.id || eater.tier >= RAINBOW) return false;
+    const counters = e.meals.includes(meal.beast) || (e.skewer && meal.beast === 'rat');
+    if (eater.tier !== meal.tier) {
+      if (meal.tier < eater.tier && counters && e.fight) return true;
+      if (meal.tier > eater.tier && counters && e.maul) return true;
+      return eater.tier > meal.tier && e.guillotine && eatsOf(state, 'wolf').includes(meal.beast);
+    }
+    return counters || e.crown;
+  }
+
   function devourOptions(state, n) {
     const cell = state.cells[n];
     if (!cell || cell.sealed || !cell.inmate) return [];
     const eater = cell.inmate;
+    const e = eaterOf(state, eater);
     const out = [];
     for (const c of state.cells) {
       if (c === cell) continue;
-      if (!c.sealed && canEat(state, eater, c.inmate)) out.push({ cell: c.n, scratch: false });
+      if (!c.sealed && eaterCanEat(state, e, c.inmate)) out.push({ cell: c.n, scratch: false });
       else if (c.sealed && c.scratch && eater.beast === 'wolf' && c.hidden && c.hidden.tier === eater.tier && eater.tier < RAINBOW) out.push({ cell: c.n, scratch: true });
     }
     return out;
@@ -1098,9 +1124,10 @@
     const cell = state.cells[n];
     if (!cell || cell.sealed || !cell.inmate) return false;
     const eater = cell.inmate;
+    const e = eaterOf(state, eater);
     for (const c of state.cells) {
       if (c === cell) continue;
-      if (!c.sealed && canEat(state, eater, c.inmate)) return true;
+      if (!c.sealed && eaterCanEat(state, e, c.inmate)) return true;
       if (c.sealed && c.scratch && eater.beast === 'wolf' && c.hidden && c.hidden.tier === eater.tier && eater.tier < RAINBOW) return true;
     }
     return false;
