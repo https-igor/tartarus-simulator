@@ -2512,6 +2512,18 @@
       checks.add(warden);
       notes.push('The eater in the warden’s cell wasn’t read: set it as it is now.');
     }
+    // The game offers meals at the eater's own rarity only (but for the
+    // Maul's and Cage Fight's): when every meal on offer had one rarity on
+    // the board before, the eater has it too. The meal screen's red light
+    // read a chain's Legendary eater as Supreme, and with no meal fitting it
+    // the board was taken for a misreading.
+    if (!first && m.cells[warden].kind === 'inmate' && !(m.tools || []).includes('maul') && m.startEvent !== 'cagefight') {
+      const meals = r.chain.targets.map((n) => m.cells[n]).filter((c) => c && c.kind === 'inmate');
+      if (meals.length && meals.length === r.chain.targets.length && meals.every((c) => c.tier === meals[0].tier) && m.cells[warden].tier !== meals[0].tier) {
+        m.cells[warden].tier = meals[0].tier;
+        notes.push('The eater’s rarity was read wrong on the meal pick’s red light: it was set to its meals’ rarity.');
+      }
+    }
     const tier = m.cells[warden].kind === 'inmate' ? m.cells[warden].tier : 0;
     // The meals on offer: the board before keeps its inmate when it fits;
     // otherwise the beast read here, at the eater's rarity. A scratched door
