@@ -15,7 +15,7 @@
   // The published single-file build sets this; its viewer cannot download files.
   const EMBEDDED = !!window.TARTARUS_EMBEDDED;
 
-  const KEYS = { save: 'tartarus-sim:save:v2', prefs: 'tartarus-sim:prefs:v1', params: 'tartarus-sim:params:v7' };
+  const KEYS = { save: 'tartarus-sim:save:v2', prefs: 'tartarus-sim:prefs:v1', params: 'tartarus-sim:params:v8' };
   const HISTORY_LIMIT = 40;
   const DEFAULT_PREFS = { advisor: false, quick: false, motion: true, sound: true, volume: 60, immersive: false };
 
@@ -73,19 +73,26 @@
   function loadLabParams() {
     const saved = store.get(KEYS.params);
     if (saved) return T.normalizeParams(saved);
+    // The odds calibrated on 38,011 live boards (2026-10-18): door and
+    // Replace rarities, beasts, and mornings with one door fewer give way;
+    // the rest carries over.
+    const v7 = store.get('tartarus-sim:params:v7');
+    if (v7 && typeof v7 === 'object') {
+      for (const key of ['tierWeights', 'swapWeights', 'beastWeights', 'fewerDoorsChance']) delete v7[key];
+      return T.normalizeParams(v7);
+    }
     // Second meals at every rarity, as players' games show (2026-10-17):
     // the saved Legendary-and-up gives way; the rest carries over.
     const v6 = store.get('tartarus-sim:params:v6');
     if (v6 && typeof v6 === 'object') {
-      delete v6.doubleEatTier;
+      for (const key of ['doubleEatTier', 'tierWeights', 'swapWeights', 'beastWeights', 'fewerDoorsChance']) delete v6[key];
       return T.normalizeParams(v6);
     }
     // The live door odds replace the old defaults (2026-10-16); the rest of
     // the Lab's settings carry over.
     const v5 = store.get('tartarus-sim:params:v5');
     if (v5 && typeof v5 === 'object') {
-      delete v5.tierWeights;
-      delete v5.doubleEatTier;
+      for (const key of ['doubleEatTier', 'tierWeights', 'swapWeights', 'beastWeights', 'fewerDoorsChance']) delete v5[key];
       return T.normalizeParams(v5);
     }
     let old = store.get('tartarus-sim:params:v4') || store.get('tartarus-sim:params:v3');
@@ -1857,7 +1864,7 @@
   function paramField(f, value) {
     const id = `param-${f.key}`;
     const label = `<span>${esc(f.label)}</span>`;
-    if (f.type === 'int') return `<label class="param" for="${id}">${label}<input type="number" id="${id}" min="${f.min}" max="${f.max}" step="1" value="${value}"></label>`;
+    if (f.type === 'int') return `<label class="param" for="${id}">${label}<input type="number" id="${id}" min="${f.min}" max="${f.max}" step="${f.step || 1}" value="${value}"></label>`;
     if (f.type === 'bool') return `<label class="param" for="${id}">${label}<input type="checkbox" id="${id}"${value ? ' checked' : ''}></label>`;
     if (f.type === 'tier') {
       return `<label class="param" for="${id}">${label}<select id="${id}">${T.TIERS.slice(0, 5).map((t, i) => `<option value="${i}"${i === value ? ' selected' : ''}>${t}</option>`).join('')}</select></label>`;

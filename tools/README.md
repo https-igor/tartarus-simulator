@@ -59,6 +59,19 @@ The Chinese sim's 12-day contract challenge (contracts, vouchers, escorts and co
 
 The Chinese sim's two-meal food chain (Mammoth also eats Wolf, Lion also eats Rat) was confirmed not to be in the live game on 2026-10-15, so it was removed from the simulator and the lab. The older sections below still show the two-meal numbers measured at the time; their files are in the git history.
 
+### Odds calibrated on 38,011 live boards (2026-10-18)
+
+`beta/data/rates.json` (tools/live-data.js) showed some of the simulator's odds outside the live 95% ranges. Only those values moved; the Lab's saved settings move to params:v8 and pick them up.
+- **Doors** (`tierWeights`, 7,191 doors): 40/38/12/8/2 → **42/36/12/9/2** (live 41.8/35.9/11.4/9.2/1.8%). Rare and Supreme fitted and stay.
+- **Replace** (`swapWeights`, 696 Replaces): 52/32/9/6/1.5 → **42/32/14/6/1.5** (live 42.2/33.3/14.5/7.3/2.3%). rates.json had compared Replaces with the door odds ("the simulator uses the same odds as doors"), but the engine and the solver use `swapWeights`; live-data.js now compares with those. 2 Replaces read as bringing in a Rainbow: too few to act on.
+- **Beasts** (`beastWeights`, 7,191 doors): 25 each → **25/23/26/26** Mammoth/Lion/Wolf/Rat (live 24.1/23.2/26.3/26.4%). The 890 Replaces lean the other way (Lion 27.2%, Rat 21.3%), but they include the Bloody Pestle, which keeps the old beast, and are an eighth of the doors.
+- **One door fewer** (`fewerDoorsChance`, now takes halves): 0 → **2.5%**. The 16.9% "mornings with fewer doors" counted mornings with an instrument that takes a door (537, all short) and mornings with the office in reach (31.9% short, against 2.5% without): the office is one of the doors there, boards that show it as a door aren't shared, and its missed card reads as a short morning. Without either, 138 of 5,588 mornings (2.5%, 2.1 to 2.9%) show two doors. And 0 of 537 mornings with the Forged Key, Barbed Whip or Burning Stake show a door fewer still, so the roll doesn't add to them (`destinationLimit`).
+- **Not changed:** the events (the collector's 60% of first boards with an event, of 931, is biased low: boards with the newer event kinds aren't shared; the 72% comes from 3,946 screenshot first boards), the Ring of Keys (199 patrols), side doors and Chain reactions (too few).
+
+On the same 100,000 prisons (`eval --seed CALIB`), the strategy makes 1.885 ± 0.010 Rainbows a run with no tools (was 1.815) and 4.658 ± 0.013 with rewards on (was 4.624); the simple player 0.907 and 1.755 (was 0.857 and 1.710). With no tools, one change at a time: the Replace odds +0.062, the door odds +0.019, the beasts 0.000, and the short mornings -0.017. That is the simulated game getting a little easier, not better play.
+
+The tuned weights still fit: one notch either way on the main weights (`variants`, 100,000 runs each) gains at most +0.011 with no tools (tierBase 3) and +0.018 with rewards on (tierBase 2.75), about as much as under the old odds. The one habit the new odds flipped is swapping only Normals (`swapMaxTier` 0): +0.004 under the old odds, -0.021 under the new, and the profiles already swap Magics or more. A `train` would likely find under 0.02; on 11 threads of a Ryzen 5 5600G it takes about 2 hours (about 11M runs a profile at ~2,200 runs/s with rewards on, ~5,500 without).
+
 ### Usurpations in a row, and the Muzzle before its consume (2026-10-18)
 
 Two rules from the user, in the engine since 20261018d:

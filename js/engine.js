@@ -64,7 +64,12 @@
     destinations: 3,
     patrolRange: 6,
     eventTwoDoors: false,
-    fewerDoorsChance: 0,
+    // Some mornings offer one door fewer (players' boards, 2026-10-16: 138
+    // of 5,588 mornings without the office in reach or an instrument that
+    // takes a door, 2.5%). Mornings with the office in reach don't count:
+    // the office is one of the doors there, and boards that show it aren't
+    // shared, so a missed office card reads as a short morning.
+    fewerDoorsChance: 2.5,
     swapsPerDay: 1,
     reusableCells: true,
     // The game's Cancel stops a consume chain after any bite (user,
@@ -72,13 +77,16 @@
     // single meal. Off: the chain must go on, and a single meal is taken at
     // once.
     chainStop: true,
-    // Live odds from players' boards (tools/live-data.js, 2026-10-16): who's
-    // behind a door (1,011 doors without the Sorting Hook or the Dog Tag),
-    // and who a Replace brings in (261, without the instruments that change
-    // it). Both were 52/27/15/6/0 before.
-    tierWeights: [40, 38, 12, 8, 2],
-    swapWeights: [52, 32, 9, 6, 1.5],
-    beastWeights: [25, 25, 25, 25],
+    // Live odds from players' boards (tools/live-data.js, 38,011 boards to
+    // 2026-10-16): who's behind a door (7,191 doors without the Sorting Hook
+    // or the Dog Tag: 41.8/35.9/11.4/9.2/1.8%), who a Replace brings in (696,
+    // without the instruments that change it: 42.2/33.3/14.5/7.3/2.3%), and
+    // the beast behind a door (Mammoth 24.1, Lion 23.2, Wolf 26.3, Rat
+    // 26.4%). Only the values the boards ruled out moved: doors were
+    // 40/38/12/8/2, Replace 52/32/9/6/1.5 and beasts 25 each.
+    tierWeights: [42, 36, 12, 9, 2],
+    swapWeights: [42, 32, 14, 6, 1.5],
+    beastWeights: [25, 23, 26, 26],
     // Second meals (Mammoths eat Wolves, Lions eat Rats) from this rarity
     // up: every rarity, as players' games show (it was 3, Legendary).
     doubleEatTier: 0,
@@ -106,7 +114,7 @@
     { key: 'drillDays', group: 'Pace', label: 'Drill length in days', type: 'int', min: 5, max: 60 },
     { key: 'destinations', group: 'Pace', label: 'Most patrol doors offered each morning', type: 'int', min: 1, max: 15 },
     { key: 'patrolRange', group: 'Pace', label: 'Destinations come from this many cells clockwise ahead of the warden', type: 'int', min: 1, max: 15 },
-    { key: 'fewerDoorsChance', group: 'Pace', label: 'Chance a morning offers one door fewer (%)', type: 'int', min: 0, max: 100 },
+    { key: 'fewerDoorsChance', group: 'Pace', label: 'Chance a morning offers one door fewer (%)', type: 'int', step: 0.5, min: 0, max: 100 },
     { key: 'swapsPerDay', group: 'Pace', label: 'Replaces per day', type: 'int', min: 0, max: 16 },
     { key: 'reusableCells', group: 'Pace', label: 'Emptied cells seal again and can be reopened', type: 'bool' },
     { key: 'chainStop', group: 'Pace', label: 'A consume chain can be stopped after any bite (the game’s Cancel); off, it must go on', type: 'bool' },
@@ -431,7 +439,8 @@
       const value = input[field.key];
       if (value === undefined || value === null) continue;
       if (field.type === 'int' || field.type === 'tier') {
-        const n = Math.round(Number(value));
+        // A field with a step takes halves too (a measured 2.5%).
+        const n = field.step ? Math.round(Number(value) / field.step) * field.step : Math.round(Number(value));
         if (Number.isFinite(n)) p[field.key] = field.type === 'tier' ? clamp(n, 0, RAINBOW - 1) : clamp(n, field.min, field.max);
       } else if (field.type === 'bool') {
         p[field.key] = !!value;
@@ -907,16 +916,20 @@
   // ---------- Day flow ----------
 
   // Today's door count, drawn each morning.
-  // The Forged Key takes one door off every morning.
+  // The Forged Key, the Barbed Whip and the Burning Stake each take one door
+  // off every morning. A morning's one door fewer (fewerDoorsChance) doesn't
+  // add to them: live mornings with one of them never show a door fewer
+  // still (0 of 537 boards, 2026-10-16).
   function destinationLimit(state) {
-    return Math.max(1, (state.destBase || state.params.destinations) - (has(state, 'forged') ? 1 : 0) - (has(state, 'whip') ? 1 : 0) - (has(state, 'stake') ? 1 : 0));
+    const taken = (has(state, 'forged') ? 1 : 0) + (has(state, 'whip') ? 1 : 0) + (has(state, 'stake') ? 1 : 0);
+    return Math.max(1, Math.min(state.destBase || state.params.destinations, state.params.destinations - taken));
   }
 
   // Destinations come from the cells just ahead of the warden, clockwise:
   // locked ones to open, open ones whose inmates you already know, or the
   // warden's office, where the warden can Instigate or Bestow.
   function rollDestinations(state) {
-    // Some mornings offer one door fewer; the odds are a practice value.
+    // Some mornings offer one door fewer (fewerDoorsChance).
     const fewer = rand(state) * 100 < state.params.fewerDoorsChance;
     state.destBase = Math.max(1, state.params.destinations - (fewer ? 1 : 0));
     const range = Math.min(state.params.patrolRange, CELL_COUNT - 1);

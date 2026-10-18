@@ -315,7 +315,8 @@ function observe(pairs) {
     if (B.day === A.day + 1 && B.step === 'patrol' && B.warden === A.warden && B.dest.length && seen('dest')) {
       const offsets = B.dest.map((d) => steps(B.warden, d)).sort((x, y) => x - y);
       const office = steps(B.warden, T.OFFICE);
-      obs.mornings.push({ count: B.dest.length, offsets, officeInReach: office >= 1 && office <= 5, fire: B.tools.includes('fire') });
+      const takers = ['forged', 'whip', 'stake'].filter((id) => B.tools.includes(id)).length;
+      obs.mornings.push({ count: B.dest.length, offsets, officeInReach: office >= 1 && office <= 5, officeInReach6: office >= 1 && office <= T.DEFAULT_PARAMS.patrolRange, takers });
     }
 
     // A tool on offer.
@@ -425,7 +426,7 @@ function measure(rows) {
   const P = T.DEFAULT_PARAMS;
   const TIERS = T.TIERS;
   const BEASTS = T.BEASTS;
-  const tiers = (list) => distribution(list.map((o) => o.tier), TIERS, P.tierWeights);
+  const tiers = (list, weights) => distribution(list.map((o) => o.tier), TIERS, weights || P.tierWeights);
   const beasts = (list) => distribution(list.filter((o) => o.tier < T.RAINBOW).map((o) => BEASTS.indexOf(o.beast)), BEASTS.map(T.beastName), P.beastWeights);
 
   // Day 1: how many runs' first boards show an event behind a door.
@@ -445,7 +446,11 @@ function measure(rows) {
   // Doors without the instruments that change what's behind them: the
   // Sorting Hook (never a Normal) and the Felon's Dog Tag (25% +1 tier).
   const plainDoors = obs.doors.filter((d) => !d.tools.includes('hook') && !d.tools.includes('dogtag'));
-  const mornings = obs.mornings.filter((m) => !m.fire);
+  // Mornings that can show one door fewer: none of the instruments that
+  // take a door (they don't add up with it), and the office out of reach
+  // (it is one of the doors there, and boards that show it as a door aren't
+  // shared, so its missed card reads as a door fewer).
+  const mornings = obs.mornings.filter((m) => !m.takers && !m.officeInReach6);
   const offsets = {};
   for (const m of obs.mornings) for (const o of m.offsets) offsets[o] = (offsets[o] || 0) + 1;
   const reachMornings = obs.mornings.filter((m) => m.officeInReach);
@@ -471,8 +476,8 @@ function measure(rows) {
       withTools: obs.doors.length - plainDoors.length,
     },
     swaps: {
-      about: "Who comes in when the warden's inmate is swapped, without Hangman's Rope or a Burning Stake roll. The simulator uses the same odds as doors.",
-      tiers: tiers(plainSwaps),
+      about: "Who comes in when the warden's inmate is swapped, without Hangman's Rope or a Burning Stake roll. Simulator: swapWeights, and beastWeights.",
+      tiers: tiers(plainSwaps, P.swapWeights || P.tierWeights),
       beasts: beasts(obs.swaps),
     },
     sideDoors: {
@@ -495,10 +500,11 @@ function measure(rows) {
       markedDoorsWithoutEvents: obs.eventless,
     },
     mornings: {
-      about: "The doors on offer each morning. Simulator: 3 of the 5 cells ahead (2 with the Burning Stake), and fewerDoorsChance for a morning with one fewer.",
+      about: "The doors on offer each morning. Simulator: 3 of the 6 steps ahead, the office among them (one fewer each for the Forged Key, the Barbed Whip and the Burning Stake), and fewerDoorsChance for a morning with one fewer, which doesn't add to them. fewerDoors counts mornings with none of those instruments and the office out of reach; withTakers, mornings with them that show a door fewer still.",
       n: obs.mornings.length,
       doorCounts: obs.mornings.reduce((m, x) => Object.assign(m, { [x.count]: (m[x.count] || 0) + 1 }), {}),
       fewerDoors: rate(mornings.filter((m) => m.count < P.destinations).length, mornings.length, P.fewerDoorsChance / 100),
+      withTakers: rate(obs.mornings.filter((m) => m.takers && m.count < P.destinations - m.takers).length, obs.mornings.filter((m) => m.takers).length, 0),
       stepsAhead: offsets,
       officeInReach: {
         about: 'Mornings where the office is within 5 steps. If the office counts as a step, no door is ever more than 5 steps ahead; if it is skipped, the 6th step can be offered.',
@@ -550,7 +556,8 @@ function print(o) {
   printRate('Day 1 first boards with an event', o.events.dayOneBoardsWithEvents);
   printRate('Events that are Chain reactions', o.events.chainReactions);
   if (o.events.unmarkedDoorsWithEvents) console.log(`  Note: ${o.events.unmarkedDoorsWithEvents} events came from doors not marked with one.`);
-  printRate('Mornings with fewer doors', o.mornings.fewerDoors);
+  printRate('Mornings with fewer doors (no door-taking instrument, office out of reach)', o.mornings.fewerDoors);
+  printRate('Mornings with a door-taking instrument and a door fewer still', o.mornings.withTakers);
   console.log(`  Doors on offer by steps ahead: ${Object.entries(o.mornings.stepsAhead).map(([k, v]) => `${k}: ${v}`).join(', ') || 'none yet'}`);
   console.log(`  Office within reach: ${o.mornings.officeInReach.n} mornings, ${o.mornings.officeInReach.withADoorSixAhead} with a door 6 steps ahead.`);
   console.log(`\nDevours: ${o.devours.n}${o.devours.n ? `, ${o.devours.meanBites.toFixed(2)} bites on average, ${o.devours.meanExtraTiers.toFixed(2)} extra tiers` : ''}`);
