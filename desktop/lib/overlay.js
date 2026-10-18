@@ -55,6 +55,9 @@
     if (wontShare && state.shell.screenShare === null) return line('warn', `${g.adminBlock ? 'The game runs as administrator, so Windows' : 'Windows'} won’t let the app share the game window. It can share the screen the game is on instead: every picture is cut to the game window’s area before anything reads or keeps it, and taken only while the game is the window in front. You can turn this off in the tray menu.`, button('Share the screen', 'screen-yes', true), button('No', 'screen-no'));
     if (wontShare && state.shell.screenShare === false && g.adminBlock) return line('warn', 'The game runs as administrator, so Windows won’t let the app share its window. Allow sharing the game’s screen in the tray menu, or start the app with right-click → Run as administrator.');
     if (wontShare && state.shell.screenShare === false) return line('warn', 'Windows won’t let the app share the game window. Allow sharing the game’s screen in the tray menu, cut to the game window, to get pictures.');
+    // From the Riot's screen until back in the prison, no pictures are taken
+    // on purpose (the fight gets the game's frames).
+    if (f.window !== 'on' && state.shell.riot) return line('info', 'Riot or out of the prison: pictures wait until you’re back in the prison.');
     if (f.window !== 'on') return line('busy', 'Sharing the game window…');
     // The game's own Enable Log is off: its log has none of the lines the
     // triggers look for, so no pictures come (js/capture.js tells).

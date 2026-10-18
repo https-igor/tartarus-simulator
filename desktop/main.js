@@ -1226,8 +1226,7 @@ function makeMarks() {
   wins.marks = win;
   win.setIgnoreMouseEvents(true, { forward: true });
   win.setAlwaysOnTop(true, 'screen-saver');
-  // Never in a picture: the reader would see the marks on the board.
-  win.setContentProtection(true);
+  win.setContentProtection(marksHidden());
   win.loadFile(path.join(__dirname, 'lib', 'marks.html'));
   win.webContents.on('will-navigate', (e) => e.preventDefault());
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
@@ -1761,9 +1760,14 @@ let testUnlisted = false; // --test: as if the capture's list left the game out
 let testShareFail = false; // --test: as if Windows wouldn't share the game window
 let screenNext = false; // follow.html asked for the screen on its next share
 const screenAllowed = () => !!(settings.screenShare && settings.screenShare.on === true && agreed);
+// The marks follow the card's "Hide it from screenshots and streams", but a
+// shared screen (the fallback) always leaves them out: the reader would see
+// them on the board. A shared window holds the game alone, never the marks.
+const marksHidden = () => !!settings.hideFromCaptures || screenAllowed();
 function setScreenShare(on) {
   settings.screenShare = { on: !!on, at: new Date().toISOString() };
   saveSettings();
+  if (wins.marks && !wins.marks.isDestroyed()) wins.marks.setContentProtection(marksHidden());
   note(on ? 'screen share allowed: the screen the game is on, cut to the game window, when Windows won’t share the window' : 'screen share declined');
   pushShell();
   rebuildMenu();
@@ -1938,7 +1942,7 @@ function rebuildMenu() {
     { label: 'Show the overlay', type: 'checkbox', checked: settings.overlayOn, accelerator: HOTKEYS.overlay, click: (i) => setOverlayOn(i.checked) },
     { label: 'Hide it while another window is in front', type: 'checkbox', checked: settings.hideBehind, enabled: !!win32, click: (i) => { settings.hideBehind = i.checked; saveSettings(); updateOverlay(); } },
     { label: 'Share the game’s screen when Windows won’t share its window', type: 'checkbox', checked: screenAllowed(), enabled: agreed && !!win32, click: (i) => setScreenShare(i.checked) },
-    { label: 'Hide it from screenshots and streams', type: 'checkbox', checked: settings.hideFromCaptures, click: (i) => { settings.hideFromCaptures = i.checked; saveSettings(); if (wins.overlay) wins.overlay.setContentProtection(i.checked); } },
+    { label: 'Hide it from screenshots and streams', type: 'checkbox', checked: settings.hideFromCaptures, click: (i) => { settings.hideFromCaptures = i.checked; saveSettings(); if (wins.overlay) wins.overlay.setContentProtection(i.checked); if (wins.marks && !wins.marks.isDestroyed()) wins.marks.setContentProtection(marksHidden()); } },
     { label: 'Put the overlay back in the corner', click: () => { settings.overlay = null; overlayPlaced = false; saveSettings(); placeOverlay(); } },
     { type: 'separator' },
     { label: 'Board analyzer', accelerator: HOTKEYS.analyzer, click: () => show('analyzer') },
