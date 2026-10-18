@@ -853,7 +853,7 @@ const usageText = (u, c) => `app ${u.mb} MB (${u.each.join(', ')})${u.cpu === nu
 
 // ---------- Windows ----------
 
-const wins = { follow: null, analyzer: null, overlay: null, review: null };
+const wins = { follow: null, analyzer: null, overlay: null, review: null, marks: null };
 let quitting = false;
 let tray = null;
 
@@ -1089,8 +1089,197 @@ function setOverlayOn(on) {
   settings.overlayOn = !!on;
   saveSettings();
   updateOverlay();
+  refreshMarks();
   rebuildMenu();
 }
+
+// ---------- The marks over the game ----------
+
+// #region marks
+// The analyzer's marks (rings, boxes, arrows and a title) drawn on the game
+// itself, in a see-through window exactly over the game window that every
+// click goes through (lib/marks.html). The payload is in the picture's
+// pixels; the picture is the game window's content, so the page scales it
+// to the window. Hidden with the overlay (Ctrl+Alt+O), when the game window
+// is gone, and MARKS_TTL after the last payload.
+const MARKS_TTL = 20000;
+const MARKS_TONES = new Set(['go', 'target', 'hint']);
+let marks = null; // the last payload, checked
+let marksAt = 0;
+let marksTimer = null;
+let marksLooking = false;
+let marksShownId = null; // the payload the page has
+let marksReady = false; // the page has loaded
+// --test: where the marks go when there's no game window (x,y,w,h in DIP),
+// or the main screen.
+const TEST_MARKS_RECT = (() => {
+  const v = (arg('marks-rect') || '').split(',').map(Number);
+  return v.length === 4 && v.every(Number.isFinite) && v[2] > 0 && v[3] > 0 ? { x: v[0], y: v[1], width: v[2], height: v[3] } : null;
+})();
+
+// Only numbers, short text and short lists get through.
+function cleanMarks(p) {
+  if (!p || typeof p !== 'object') return null;
+  const num = (v, lo, hi) => (typeof v === 'number' && Number.isFinite(v) ? Math.max(lo, Math.min(hi, v)) : null);
+  const width = num(p.width, 1, 20000);
+  const height = num(p.height, 1, 20000);
+  if (!width || !height) return null;
+  const text = (v, n) => (typeof v === 'string' ? v.replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, n) : '');
+  const xs = (v) => num(v, -width, 2 * width);
+  const ys = (v) => num(v, -height, 2 * height);
+  const list = (v, n) => (Array.isArray(v) ? v.slice(0, n) : []);
+  const out = { id: num(p.id, -1e15, 1e15) || 0, width, height, title: text(p.title, 80), marks: [], arrows: [] };
+  for (const m of list(p.marks, 24)) {
+    if (!m || typeof m !== 'object') continue;
+    const r = { shape: m.shape === 'box' ? 'box' : 'ring', x: xs(m.x), y: ys(m.y), w: num(m.w, 0, width), h: num(m.h, 0, height), tone: MARKS_TONES.has(m.tone) ? m.tone : 'go' };
+    if ([r.x, r.y, r.w, r.h].includes(null)) continue;
+    const label = text(m.label, 40);
+    if (label) r.label = label;
+    out.marks.push(r);
+  }
+  for (const a of list(p.arrows, 12)) {
+    if (!a || typeof a !== 'object') continue;
+    const r = { x1: xs(a.x1), y1: ys(a.y1), x2: xs(a.x2), y2: ys(a.y2) };
+    if (!Object.values(r).includes(null)) out.arrows.push(r);
+  }
+  return out.marks.length || out.arrows.length || out.title ? out : null;
+}
+
+// The game window's content in DIP, or null when it's gone or minimized.
+// Windows: its visible frame (the window share's picture). Linux/X11 (the
+// game under XWayland, game.hwnd the X window id): xwininfo, in X pixels,
+// divided by the scale of the screen it's on.
+function xwininfo(id) {
+  return new Promise((resolve) => {
+    execFile('xwininfo', ['-id', String(id)], { timeout: 2000 }, (err, out) => {
+      if (err) return resolve(null);
+      const v = (re) => {
+        const m = re.exec(out);
+        return m ? Number(m[1]) : NaN;
+      };
+      const r = { x: v(/Absolute upper-left X:\s*(-?\d+)/), y: v(/Absolute upper-left Y:\s*(-?\d+)/), width: v(/Width:\s*(\d+)/), height: v(/Height:\s*(\d+)/) };
+      const viewable = !/Map State:\s*Is(UnMapped|Unviewable)/.test(out);
+      resolve(viewable && Object.values(r).every(Number.isFinite) && r.width > 0 && r.height > 0 ? r : null);
+    });
+  });
+}
+function x11ToDip(r) {
+  const cx = r.x + r.width / 2;
+  const cy = r.y + r.height / 2;
+  const ds = screen.getAllDisplays();
+  const px = (d) => ({ x: d.bounds.x * d.scaleFactor, y: d.bounds.y * d.scaleFactor, width: d.bounds.width * d.scaleFactor, height: d.bounds.height * d.scaleFactor });
+  const d = ds.find((x) => {
+    const b = px(x);
+    return cx >= b.x && cx < b.x + b.width && cy >= b.y && cy < b.y + b.height;
+  }) || screen.getPrimaryDisplay();
+  const f = d.scaleFactor || 1;
+  return { x: Math.round(r.x / f), y: Math.round(r.y / f), width: Math.round(r.width / f), height: Math.round(r.height / f) };
+}
+async function gameRect() {
+  if (game.running && game.hwnd) {
+    if (win32) {
+      if (win32.minimized(game.hwnd)) return null;
+      const r = win32.frame(game.hwnd);
+      return r && r.width > 50 ? screen.screenToDipRect(null, r) : null;
+    }
+    if (process.platform === 'linux') {
+      const r = await xwininfo(game.hwnd);
+      return r ? x11ToDip(r) : null;
+    }
+    return null;
+  }
+  if (TEST) return TEST_MARKS_RECT || screen.getPrimaryDisplay().bounds;
+  return null;
+}
+
+function makeMarks() {
+  const win = new BrowserWindow({
+    width: 400,
+    height: 300,
+    show: false,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    movable: false,
+    maximizable: false,
+    minimizable: false,
+    fullscreenable: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    focusable: false,
+    hasShadow: false,
+    title: 'Tartarus Overlay marks',
+    icon: ICON,
+    webPreferences: { preload: path.join(__dirname, 'lib', 'marks-preload.js'), backgroundThrottling: false, contextIsolation: true, sandbox: true },
+  });
+  wins.marks = win;
+  win.setIgnoreMouseEvents(true, { forward: true });
+  win.setAlwaysOnTop(true, 'screen-saver');
+  // Never in a picture: the reader would see the marks on the board.
+  win.setContentProtection(true);
+  win.loadFile(path.join(__dirname, 'lib', 'marks.html'));
+  win.webContents.on('will-navigate', (e) => e.preventDefault());
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  win.webContents.on('did-finish-load', () => {
+    marksReady = true;
+    marksShownId = null;
+    refreshMarks();
+  });
+  win.on('close', (e) => {
+    if (!quitting) e.preventDefault();
+  });
+  return win;
+}
+
+function hideMarks() {
+  const win = wins.marks;
+  if (marksTimer) clearInterval(marksTimer);
+  marksTimer = null;
+  marksShownId = null;
+  if (!win || win.isDestroyed() || !win.isVisible()) return;
+  win.webContents.send('marks', null);
+  win.hide();
+}
+// Shows the last payload over the game window, or hides it; while shown,
+// called every second to follow the game window.
+async function refreshMarks() {
+  if (!marks || Date.now() - marksAt > MARKS_TTL || !settings.overlayOn || marksLooking) {
+    if (!marksLooking) hideMarks();
+    return;
+  }
+  marksLooking = true;
+  let r = null;
+  try {
+    r = await gameRect();
+  } catch (e) {
+    r = null;
+  }
+  marksLooking = false;
+  if (!r || !marks || Date.now() - marksAt > MARKS_TTL || !settings.overlayOn) return hideMarks();
+  const win = wins.marks && !wins.marks.isDestroyed() ? wins.marks : makeMarks();
+  if (!marksReady) return undefined; // did-finish-load comes back
+  const b = win.getBounds();
+  if (b.x !== r.x || b.y !== r.y || b.width !== r.width || b.height !== r.height) win.setBounds(r);
+  if (marksShownId !== marks.id) {
+    win.webContents.send('marks', marks);
+    marksShownId = marks.id;
+  }
+  if (!win.isVisible()) {
+    win.showInactive();
+    win.setAlwaysOnTop(true, 'screen-saver');
+    // The card stays above the marks.
+    if (overlayShown && wins.overlay && !wins.overlay.isDestroyed()) wins.overlay.moveTop();
+  }
+  if (!marksTimer) marksTimer = setInterval(refreshMarks, 1000);
+  return undefined;
+}
+function setMarks(payload) {
+  marks = cleanMarks(payload);
+  marksAt = Date.now();
+  marksShownId = null; // sent again, even with the same id
+  refreshMarks();
+}
+// #endregion
 
 // ---------- Between the pages and the overlay ----------
 
@@ -1411,6 +1600,12 @@ ipcMain.on('site:advice', (e, data) => {
   send('overlay', 'advice', data);
 });
 
+// The marks over the game (analyzer only); null clears them.
+ipcMain.on('site:marks', (e, payload) => {
+  if (!fromPage(e, 'analyzer') || (payload && !small(payload))) return;
+  setMarks(payload);
+});
+
 // The overlay's buttons.
 ipcMain.on('overlay:command', (e, cmd) => {
   if (sender(e, 'overlay')) command(cmd);
@@ -1695,7 +1890,7 @@ function rebuildMenu() {
     { label: 'Open the debug log', click: () => shell.openPath(LOG_FILE) },
     ...(DEV ? [{
       label: 'Developer tools',
-      submenu: [['follow', 'Auto Screenshot Mode page'], ['analyzer', 'Board analyzer'], ['overlay', 'Overlay']].map(([name, label]) => ({
+      submenu: [['follow', 'Auto Screenshot Mode page'], ['analyzer', 'Board analyzer'], ['overlay', 'Overlay'], ['marks', 'Marks over the game']].map(([name, label]) => ({
         label,
         click: () => wins[name] && wins[name].webContents.openDevTools({ mode: 'detach' }),
       })),
@@ -1780,6 +1975,18 @@ if (!app.requestSingleInstanceLock()) {
       // "cpu one": as the tray's Processor use does.
       const cpu = /cpu (\w+)/.exec(text);
       if (cpu) setCpu(cpu[1]);
+      // "marks <file.json>": as if the analyzer sent that payload ("marks
+      // off" clears). Without a game window they go over --marks-rect.
+      const mk = /^marks (\S+)\s*$/m.exec(text);
+      if (mk) setMarks(mk[1] === 'off' ? null : readJson(path.resolve(mk[1])));
+      // "marks-shot <file.png>": a picture of the marks window's page.
+      const shot = /^marks-shot (\S+)\s*$/m.exec(text);
+      if (shot && wins.marks && !wins.marks.isDestroyed()) {
+        wins.marks.webContents.capturePage().then((img) => {
+          fs.writeFileSync(path.resolve(shot[1]), img.toPNG());
+          note(`marks shot: ${img.getSize().width}x${img.getSize().height}, window ${JSON.stringify(wins.marks.getBounds())}`);
+        }).catch((e) => note('marks shot failed:', String(e)));
+      }
     }, 300);
   }
 

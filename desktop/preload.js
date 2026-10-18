@@ -47,6 +47,10 @@ contextBridge.exposeInMainWorld('TartarusDesktop', {
   // To the overlay: what Auto Screenshot Mode is doing, and the advice.
   follow: (data) => ipcRenderer.send('site:follow', data),
   advice: (data) => ipcRenderer.send('site:advice', data),
+  // Marks drawn on the game window (analyzer only): { id, width, height,
+  // title, marks: [{ shape, x, y, w, h, tone, label }], arrows: [{ x1, y1,
+  // x2, y2 }] } in the picture's pixels; null clears them.
+  marks: (payload) => ipcRenderer.send('site:marks', payload === undefined ? null : payload),
   // The test record (analyzer only): an entry, and a picture's bytes.
   record: (entry, bytes) => ipcRenderer.send('site:record', entry, bytes),
   // The player's agreement on follow.html, kept by the app (follow.html

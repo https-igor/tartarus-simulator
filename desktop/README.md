@@ -16,6 +16,7 @@ site reaches the app the next time those pages load. What the shell adds:
 | `lib/follow-adapter.js` | Put into follow.html. Hands the log to `TartarusCapture.useHandle` and calls `TartarusCapture.connectWindow()` while the game runs, after the player has agreed on that page. The triggers, the agreement and the checks are the site's own code. |
 | `lib/analyzer-adapter.js` | Put into analyze.html. Copies the results panel's text to the overlay, and presses the analyzer's buttons for the overlay's (Fix, Recheck, Report). |
 | `lib/overlay.*` | The card over the game. |
+| `lib/marks.*` | Marks drawn on the game itself: rings, boxes, arrows and a title the analyzer sends with `TartarusDesktop.marks(payload)` (IPC `site:marks`, analyzer page only; see `sandbox/OVERLAY-CONTRACT.md`). A see-through, click-through, always-on-top window exactly over the game window (Windows: its visible frame; Linux/X11: `xwininfo -id <window>`, divided by the screen's scale), followed every second while marks show. Hidden with the overlay (Ctrl+Alt+O), when the game window is gone or minimized, and 20 s after the last payload. Always kept out of screenshots (content protection), so the reader never sees them. |
 
 Pictures and the log never leave the PC. Boards and reports are shared exactly
 as on the website, by the website's code (a local `--site` never shares boards).
@@ -53,8 +54,12 @@ the game runs, and every 10 minutes otherwise, the debug log notes the app's
 memory and processor use (`use:`); the debug report carries it too.
 
 Under `--test`, the app takes commands from `test-commands.txt` in its user
-data folder (`quit`, `hide <window>`, `cpu <most|half|quarter|one>`):
-Electron's main process gets no stdin on Windows.
+data folder (`quit`, `hide <window>`, `cpu <most|half|quarter|one>`,
+`marks <payload.json>` / `marks off`, `marks-shot <file.png>`):
+Electron's main process gets no stdin on Windows. Without a game window,
+`marks` puts the marks window over `--marks-rect=x,y,w,h` (DIP), or the main
+screen; `marks-shot` saves the marks page as a PNG (transparent where
+nothing is drawn). Sample payload: `sandbox/marks-sample.json`.
 
 ## Updates
 
