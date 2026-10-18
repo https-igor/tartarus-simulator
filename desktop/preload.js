@@ -44,6 +44,9 @@ contextBridge.exposeInMainWorld('TartarusDesktop', {
   // The player clicked something in the prison, from the log (follow.html
   // only): the marks over the game go.
   clicked: () => ipcRenderer.send('site:clicked'),
+  // How long a picture waited for the game to settle, and whether the
+  // window going still cut it short (follow.html only): for the debug log.
+  settled: (s) => ipcRenderer.send('site:settled', s),
   // The run is over (Ignore on the Riot screen), or a new one begins
   // (follow.html only): 'over' or 'new'.
   run: (what) => ipcRenderer.send('site:run', String(what)),

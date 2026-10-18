@@ -21,6 +21,13 @@
   // How often the log is read for new lines: a trigger is heard this long
   // after the game writes it, at most (a read of a few new bytes is cheap).
   const POLL_MS = 250;
+  // A picture can go before a trigger's settle time is up, once the shared
+  // window has moved (the animation began) and then held still: small gray
+  // thumbnails are compared from `first` ms after the last matched line,
+  // every `every` ms; `calm` comparisons in a row under `diff` (mean change
+  // of a 0-255 gray level) count as still. Lit portraits flicker a little,
+  // hence a margin above 0. Without movement seen, the settle time stands.
+  const STILL = { first: 450, every: 150, diff: 2.5, moved: 8, calm: 2, w: 48, h: 24 };
   const IDB = 'tartarus-sim-capture';
   const listeners = { status: [], hit: [], seen: [], frame: [] };
   // detail: whether the game writes the detail lines the triggers come from
@@ -280,7 +287,10 @@
     // A "skip" line (a new day's banner) drops a picture still waiting to be
     // taken, as the screen is changing: the next screen's own line follows.
     if (rule.kind === 'skip') {
-      if (burst) clearTimeout(burst.timer);
+      if (burst) {
+        clearTimeout(burst.timer);
+        clearTimeout(burst.still);
+      }
       burst = null;
       return;
     }
@@ -298,7 +308,7 @@
     }
     // Lines in a burst become one frame, once the log has been quiet for the
     // longest settle time among them.
-    if (!burst) burst = { kind: rule.kind, rank: rule.rank, settle: 0, hits: [], timer: 0 };
+    if (!burst) burst = { kind: rule.kind, rank: rule.rank, settle: 0, hits: [], timer: 0, still: 0, since: Date.now(), prev: null, moved: false, calm: 0, diffs: [], early: false };
     if (rule.rank > burst.rank) {
       burst.kind = rule.kind;
       burst.rank = rule.rank;
@@ -307,15 +317,68 @@
     if (burst.hits.length < 40) burst.hits.push({ kind: hit.kind, at: hit.at, text: hit.text });
     clearTimeout(burst.timer);
     burst.timer = setTimeout(fire, burst.settle);
+    // A new line restarts the watch for stillness too.
+    clearTimeout(burst.still);
+    burst.prev = null;
+    burst.calm = 0;
+    const b = burst;
+    burst.still = setTimeout(() => stillTick(b), Math.max(200, STILL.first * pace));
+  }
+
+  // One look at the shared window while a burst waits: once it has moved and
+  // then held still, the picture goes now instead of at the settle time.
+  // Only for a shared window (a shared screen's crop costs more a look).
+  let thumbCanvas = null;
+  async function stillTick(b) {
+    if (burst !== b || surface !== 'window' || !(imageCapture || video)) return;
+    const frame = await grab();
+    if (!frame) return;
+    let thumb = null;
+    try {
+      if (!thumbCanvas) {
+        thumbCanvas = document.createElement('canvas');
+        thumbCanvas.width = STILL.w;
+        thumbCanvas.height = STILL.h;
+      }
+      const g = thumbCanvas.getContext('2d', { willReadFrequently: true });
+      g.drawImage(frame, 0, 0, STILL.w, STILL.h);
+      const d = g.getImageData(0, 0, STILL.w, STILL.h).data;
+      thumb = new Float32Array(STILL.w * STILL.h);
+      for (let i = 0; i < thumb.length; i++) thumb[i] = 0.299 * d[i * 4] + 0.587 * d[i * 4 + 1] + 0.114 * d[i * 4 + 2];
+    } catch (e) {
+      thumb = null;
+    } finally {
+      frame.close();
+    }
+    if (burst !== b || !thumb) return;
+    if (b.prev) {
+      let sum = 0;
+      for (let i = 0; i < thumb.length; i++) sum += Math.abs(thumb[i] - b.prev[i]);
+      const diff = sum / thumb.length;
+      if (b.diffs.length < 40) b.diffs.push(Math.round(diff * 10) / 10);
+      if (diff >= STILL.moved) b.moved = true;
+      b.calm = diff < STILL.diff ? b.calm + 1 : 0;
+    }
+    b.prev = thumb;
+    if (b.moved && b.calm >= STILL.calm) {
+      clearTimeout(b.timer);
+      b.early = true;
+      fire();
+      return;
+    }
+    b.still = setTimeout(() => stillTick(b), STILL.every);
   }
 
   async function fire() {
     const b = burst;
     burst = null;
     if (!b) return;
+    clearTimeout(b.still);
     const frame = await grab();
     if (frame) setState({ frames: state.frames + 1 });
-    emit('frame', { kind: b.kind, hits: b.hits, frame, blank: isBlank(frame), why: frame ? '' : whyNot(), time: new Date() });
+    // How long it waited, and whether stillness cut it short: for tuning.
+    const settled = { ms: Date.now() - b.since, early: b.early, of: b.settle, diffs: b.diffs };
+    emit('frame', { kind: b.kind, hits: b.hits, frame, blank: isBlank(frame), why: frame ? '' : whyNot(), time: new Date(), settled });
   }
 
   // #endregion

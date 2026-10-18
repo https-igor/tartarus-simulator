@@ -1500,6 +1500,11 @@ ipcMain.on('site:run', (e, what) => {
 // Each trigger the log matched (its kind), and once a minute while the game
 // runs, how Auto Screenshot Mode is doing in numbers: for the debug log,
 // to find out why pictures don't come. Never the game log's lines.
+ipcMain.on('site:settled', (e, s) => {
+  if (!fromPage(e, 'follow') || !s || typeof s !== 'object') return;
+  const diffs = Array.isArray(s.diffs) ? s.diffs.slice(0, 40).map(Number).filter(Number.isFinite).join(' ') : '';
+  note(`settled: ${Math.round(Number(s.ms) || 0)} ms of ${Math.round(Number(s.of) || 0)}${s.early ? ', still early' : ''}; diffs ${diffs || '-'}`);
+});
 ipcMain.on('site:clicked', (e) => {
   if (!fromPage(e, 'follow')) return;
   hideMarks();
