@@ -48,10 +48,12 @@
   // counters (both meals) at its own rarity or lower, and consuming never
   // re-rolls its beast.
   const cageFight = (state) => !!state && state.startEvent === 'cagefight';
+  // Both meals, made once: callers only read the lists.
+  const BOTH_MEALS = Object.fromEntries(Object.keys(SECOND_MEAL).map((b) => [b, FOOD_CHAIN[b].concat(SECOND_MEAL[b])]));
   const eatsOf = (state, beast, tier) => {
     const first = FOOD_CHAIN[beast] || [];
     const from = cageFight(state) ? 0 : state && state.params && Number.isFinite(state.params.doubleEatTier) ? state.params.doubleEatTier : DEFAULT_PARAMS.doubleEatTier;
-    return Number.isFinite(tier) && tier >= from && SECOND_MEAL[beast] ? first.concat(SECOND_MEAL[beast]) : first;
+    return Number.isFinite(tier) && tier >= from && SECOND_MEAL[beast] ? BOTH_MEALS[beast] : first;
   };
 
   // Relative worth of one inmate per tier; the advisor ranks moves with it.

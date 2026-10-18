@@ -81,7 +81,17 @@
   };
   const paramsFor = (st) => PROFILES[st.params.rewards ? 'rewards' : 'notools'];
 
-  const withDefaults = (p) => Object.assign({}, DEFAULTS, p || {});
+  // The merged weights, kept per params object: context() asks on every move
+  // of every playout. Params objects are never changed once made (the lab
+  // tunes by making new ones), and nothing writes to the merged copy.
+  const merged = new WeakMap();
+  const noParams = {};
+  const withDefaults = (p) => {
+    const key = p || noParams;
+    let out = merged.get(key);
+    if (!out) merged.set(key, (out = Object.assign({}, DEFAULTS, key)));
+    return out;
+  };
 
   // Measured Rainbows per run for sets of up to 4 instruments held from day
   // 1 (js/tool-combos.js, from the lab's combos mode). Without it, the
@@ -139,29 +149,58 @@
 
   // ---------- Chain math ----------
 
-  // Everything a decision needs, computed once per position.
-  function context(st, params) {
-    const P = withDefaults(params);
+  // feed()'s values outlive a position: they depend only on what's in the
+  // signature below (the weights, the tools that change a bite, the second
+  // meal's rarity, a full vault and the game's Cancel), so every move of
+  // every playout with the same signature shares one memo. A memo that grows
+  // too big starts over, which costs time, never an answer.
+  const MEMO_LIMIT = 200000;
+  const memos = new Map();
+  const paramIds = new WeakMap();
+  let nextParamId = 0;
+  function sharedMemo(sig) {
+    let memo = memos.get(sig);
+    if (!memo || memo.size > MEMO_LIMIT) {
+      if (memos.size > 64) memos.clear();
+      memos.set(sig, (memo = new Map()));
+    }
+    return memo;
+  }
+
+  // What each beast eats (by index), made once for each pair of the two tools
+  // that change it. The lists are only read.
+  const dietCache = new Map();
+  function diets(skewer, crown) {
+    const key = `${skewer}${crown}`;
+    let out = dietCache.get(key);
+    if (out) return out;
     const chain = T.FOOD_CHAIN;
     const eats = BEASTS.map((b) => chain[b].map(beastIndex));
-    const skewer = has(st, 'skewer');
     if (skewer) eats[RAT] = eats[RAT].concat(RAT);
     // What each beast counters: under Cage Fight it can eat those at a
     // lower rarity too (the Crown's other beasts only at its own).
     const counters = eats.map((list) => list.slice());
     // The Iron Crown of the Prison King: a Lion eats any beast.
-    const crown = has(st, 'crown');
     if (crown) eats[LION] = [0, 1, 2, 3];
-    // The Elephant-Foot Maul: a Mammoth eats what it counters at a higher
-    // rarity too, and rises to 2 tiers above its meal.
-    const maul = has(st, 'maul');
     // From params.doubleEatTier up (every rarity since 2026-10-17), Mammoths
     // and Lions also eat their second meal (an engine cached from before has
     // none).
     const second = T.SECOND_MEAL || {};
     const withSecond = (diet) => diet.map((list, b) => [...new Set(list.concat((second[BEASTS[b]] || []).map(beastIndex)))]);
-    const eatsHigh = withSecond(eats);
-    const countersHigh = withSecond(counters);
+    out = { eats, counters, eatsHigh: withSecond(eats), countersHigh: withSecond(counters) };
+    dietCache.set(key, out);
+    return out;
+  }
+
+  // Everything a decision needs, computed once per position.
+  function context(st, params) {
+    const P = withDefaults(params);
+    const skewer = has(st, 'skewer');
+    const crown = has(st, 'crown');
+    const { eats, counters, eatsHigh, countersHigh } = diets(skewer, crown);
+    // The Elephant-Foot Maul: a Mammoth eats what it counters at a higher
+    // rarity too, and rises to 2 tiers above its meal.
+    const maul = has(st, 'maul');
     // Under Cage Fight, both meals at every rarity.
     const doubleFrom = T.cageFight && T.cageFight(st) ? 0 : Number.isFinite(st.params.doubleEatTier) ? st.params.doubleEatTier : T.SECOND_MEAL ? T.DEFAULT_PARAMS.doubleEatTier : RAINBOW;
     const v = [0, 1, 2, 3, 4, 5].map((t) => P.tierBase ** t);
@@ -183,6 +222,12 @@
     const incidents = st.objective && st.objective.id === 'incident' && !st.milestone && st.params.rewards && T.OBJECTIVES.incident ? T.OBJECTIVES.incident.need - st.objective.progress : 0;
     // Survival of the Fittest: the consumes (each bite) it still needs.
     const consumes = st.objective && st.objective.id === 'consume' && !st.milestone && st.params.rewards && T.OBJECTIVES.consume ? T.OBJECTIVES.consume.need - st.objective.progress : 0;
+    const fight = T.cageFight ? T.cageFight(st) : false;
+    const chainStop = T.canStopChain ? T.canStopChain(st) : false;
+    const revenge = has(st, 'revenge') && sealed > 0;
+    let pid = paramIds.get(P);
+    if (!pid) paramIds.set(P, (pid = ++nextParamId));
+    const sig = [pid, doubleFrom, vaultFull, chainStop, fight, revenge, skewer, crown, maul, has(st, 'saw'), has(st, 'whip'), has(st, 'muzzle'), has(st, 'collar')].join(',');
     return {
       st,
       P,
@@ -191,7 +236,7 @@
       eatsAt: (t) => (t >= doubleFrom ? eatsHigh : eats),
       countersAt: (t) => (t >= doubleFrom ? countersHigh : counters),
       // Cage Fight: lower-rarity meals, and the eater keeps its beast.
-      fight: T.cageFight ? T.cageFight(st) : false,
+      fight,
       v,
       R,
       saw: has(st, 'saw'),
@@ -201,7 +246,7 @@
       crown,
       maul,
       collar: has(st, 'collar'),
-      revenge: has(st, 'revenge') && sealed > 0,
+      revenge,
       axeDoors: has(st, 'axe') ? Math.min(2, sealed) : 0,
       dogtag: has(st, 'dogtag'),
       cage: has(st, 'cage'),
@@ -236,8 +281,8 @@
       openDist,
       openValue: openDist.reduce((sum, p, t) => sum + p * v[t], 0),
       // The game's Cancel: a chain can stop after any bite.
-      chainStop: T.canStopChain ? T.canStopChain(st) : false,
-      memo: new Map(),
+      chainStop,
+      memo: sharedMemo(sig),
     };
   }
 
@@ -432,11 +477,25 @@
     return ctx.P.wStair * (after - before);
   }
 
-  // Expected readiness change from a new inmate with tier odds `dist`.
+  // Expected readiness change from a new inmate with tier odds `dist`: what
+  // stairDelta gives for each, with the block's readiness before it reckoned
+  // once instead of for every tier and beast.
   function stairFresh(ctx, dist, comp) {
     if (!ctx.P.wStair) return 0;
+    const before = stair(ctx, comp);
     let sum = 0;
-    for (let t = 0; t < dist.length; t++) for (let b = 0; b < 4; b++) if (dist[t]) sum += (dist[t] / 4) * stairDelta(ctx, comp, t, b, 1);
+    for (let t = 0; t < dist.length; t++) {
+      if (!dist[t]) continue;
+      for (let b = 0; b < 4; b++) {
+        let delta = 0;
+        if (t < RAINBOW) {
+          comp[t * 4 + b] += 1;
+          delta = ctx.P.wStair * (stair(ctx, comp) - before);
+          comp[t * 4 + b] -= 1;
+        }
+        sum += (dist[t] / 4) * delta;
+      }
+    }
     return sum;
   }
 
@@ -1117,11 +1176,36 @@
 
   // ---------- Monte Carlo solver ----------
 
+  // A deep copy with JSON's rules (undefined left out of objects and null in
+  // arrays, NaN and Infinity as null), without the round trip through a
+  // string: the solver copies the state for every playout and every gift it
+  // weighs, and the string was most of a playout's time.
+  function copyJson(v) {
+    if (typeof v !== 'object' || v === null) return typeof v === 'number' && !Number.isFinite(v) ? null : v;
+    if (typeof v.toJSON === 'function') return JSON.parse(JSON.stringify(v));
+    if (Array.isArray(v)) {
+      const out = new Array(v.length);
+      for (let i = 0; i < v.length; i++) {
+        const x = v[i];
+        out[i] = x === undefined || typeof x === 'function' || typeof x === 'symbol' ? null : copyJson(x);
+      }
+      return out;
+    }
+    const out = {};
+    for (const k in v) {
+      if (!Object.prototype.hasOwnProperty.call(v, k)) continue;
+      const x = v[k];
+      if (x === undefined || typeof x === 'function' || typeof x === 'symbol') continue;
+      out[k] = copyJson(x);
+    }
+    return out;
+  }
+
   // A copy without the log, which playouts don't need.
   function clone(st) {
     const log = st.log;
     st.log = [];
-    const copy = JSON.parse(JSON.stringify(st));
+    const copy = copyJson(st);
     st.log = log;
     return copy;
   }
