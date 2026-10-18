@@ -104,7 +104,9 @@
     if (sh.appUpdate) out.push(line('info', `App update ${sh.appUpdate} is ready.`, button('Restart', 'restart')));
     // An update waiting while the old pages keep asking: it often fixes that.
     if (sh.siteUpdate) out.push(line(a && a.toolsConfirm ? 'warn' : 'info', a && a.toolsConfirm ? 'The site was updated, and the update may stop questions like the one below. It loads by itself when this run ends.' : 'The site was updated. It loads by itself when this run ends.', button('Reload now', 'reload', !!(a && a.toolsConfirm))));
-    const problem = followProblem();
+    // Stopped by the player: nothing is taken until Start.
+    if (sh.paused) out.push(line('info', 'Stopped: no pictures of the game are taken and no advice is drawn over it.', button('Start', 'pause', true)));
+    const problem = sh.paused ? null : followProblem();
     if (problem) out.push(problem);
 
     if (a && a.reading) out.push(line('busy', `Reading the ${a.reading.kind === 'board' || a.reading.kind === 'manual' ? 'picture' : a.reading.kind}…`));
@@ -158,6 +160,8 @@
       quiet ? `Following the log, but no game events yet. ${ENABLE_LOG}`
         : f && f.log === 'on' ? `Following ${f.file || 'the log'}: ${(f.lines || 0).toLocaleString()} new lines, ${f.hits || 0} triggers${f.diag && f.diag.lastTriggerAt ? `, the last ${ago(f.diag.lastTriggerAt)}` : ''}` : 'The game log isn’t followed');
     dot($('dot-win'), f ? (f.window === 'on' ? true : state.game.running ? null : false) : false, f && f.window === 'on' ? `Sharing the game window${f.lastFrame ? `, last picture ${ago(f.lastFrame.at)}` : ''}` : 'The game window isn’t shared');
+    $('pause').textContent = sh.paused ? 'Start' : 'Stop';
+    $('pause').classList.toggle('is-primary', !!sh.paused);
     $('report-menu').hidden = !state.menu;
     $('report-reading').hidden = !(a && a.canReportReading);
   }

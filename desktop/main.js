@@ -52,7 +52,7 @@ const DEV = flag('dev') || TEST;
 // normal build keeps the last few.
 const BIG_RECORD = flag('dev');
 const STEAM_APP = '1974050'; // Torchlight: Infinite on Steam
-const HOTKEYS = { overlay: 'Control+Alt+O', analyzer: 'Control+Alt+A', capture: 'Control+Alt+P' };
+const HOTKEYS = { overlay: 'Control+Alt+O', analyzer: 'Control+Alt+A', capture: 'Control+Alt+P', pause: 'Control+Alt+S' };
 const ICON = path.join(__dirname, 'build', 'icon.png');
 
 if (arg('user-data')) app.setPath('userData', path.resolve(arg('user-data')));
@@ -83,6 +83,7 @@ const settings = Object.assign({
   hideFromCaptures: true, // kept out of screenshots, recordings and the shared window
   hideBehind: false, // hidden while another window is in front of the game
   collapsed: false, // the overlay folded to a thin bar ("–" on it)
+  paused: false, // the player stopped Auto Screenshot Mode (Stop on the overlay, Ctrl+Alt+S): no log, no pictures, no marks
   cpu: 'half', // the analyzer's share of the processor (tray: Processor use)
   gameFirst: true, // the site pages run below normal priority, so the game comes first
   record: true, // keep a record of each board and advice, for testing
@@ -1291,12 +1292,27 @@ const sender = (e, name) => !!wins[name] && !wins[name].isDestroyed() && e.sende
 const fromPage = (e, name) => sender(e, name) && !!e.senderFrame && pageOf(e.senderFrame.url) === PAGES[name];
 
 function gameInfo() {
-  return { running: game.running, title: game.title, window: game.hwnd || 0, adminBlock: game.running && adminBlocks(game.admin), log: logPath ? { path: logPath, name: path.basename(logPath), there: !!statOf(logPath) } : null };
+  return { running: game.running, title: game.title, window: game.hwnd || 0, adminBlock: game.running && adminBlocks(game.admin), paused: !!settings.paused, log: logPath ? { path: logPath, name: path.basename(logPath), there: !!statOf(logPath) } : null };
 }
 function pushGame() {
   const g = gameInfo();
   send('follow', 'game', g);
   send('overlay', 'game', g);
+}
+
+// Stop or start Auto Screenshot Mode (the overlay's Stop/Start, the tray,
+// Ctrl+Alt+S). Stopped, follow.html lets the log and the window share go and
+// doesn't take them up again, and the marks over the game go away, until
+// the player starts it again; the choice is kept across restarts.
+function setPaused(on) {
+  settings.paused = !!on;
+  saveSettings();
+  note(on ? 'Auto Screenshot Mode stopped by the player' : 'Auto Screenshot Mode started by the player');
+  recordEvent({ type: on ? 'paused' : 'resumed' });
+  if (on) hideMarks();
+  pushGame();
+  pushShell();
+  rebuildMenu();
 }
 
 let siteUpdate = false;
@@ -1307,6 +1323,7 @@ function pushShell(patch) {
   if (patch) Object.assign(shellExtra, patch);
   send('overlay', 'shell', Object.assign({
     collapsed: settings.collapsed,
+    paused: !!settings.paused,
     riot,
     runOver,
     agreed,
@@ -1603,7 +1620,7 @@ ipcMain.on('site:advice', (e, data) => {
 // The marks over the game (analyzer only); null clears them.
 ipcMain.on('site:marks', (e, payload) => {
   if (!fromPage(e, 'analyzer') || (payload && !small(payload))) return;
-  setMarks(payload);
+  setMarks(settings.paused ? null : payload);
 });
 
 // The overlay's buttons.
@@ -1633,9 +1650,11 @@ function command(cmd) {
   switch (cmd) {
     case 'board': return toggle('analyzer');
     case 'follow': return show('follow');
+    case 'pause': return setPaused(!settings.paused);
     case 'capture':
       // Auto Screenshot Mode is off: its page, to turn it on (report 380).
       if (agreed === false) return show('follow');
+      if (settings.paused) return setPaused(false);
       return send('follow', 'command', 'capture');
     case 'fix':
       show('analyzer');
@@ -1865,6 +1884,7 @@ function rebuildMenu() {
     { label: 'Put the overlay back in the corner', click: () => { settings.overlay = null; overlayPlaced = false; saveSettings(); placeOverlay(); } },
     { type: 'separator' },
     { label: 'Board analyzer', accelerator: HOTKEYS.analyzer, click: () => show('analyzer') },
+    { label: 'Take pictures of the game (Auto Screenshot Mode)', type: 'checkbox', checked: !settings.paused, accelerator: HOTKEYS.pause, click: (i) => setPaused(!i.checked) },
     { label: 'Take a picture now', accelerator: HOTKEYS.capture, click: () => command('capture') },
     { label: 'Auto Screenshot Mode (status and agreement)', click: () => show('follow') },
     { label: 'Choose the game log…', click: () => pickLog() },
@@ -1914,6 +1934,7 @@ function registerHotkeys() {
     overlay: () => setOverlayOn(!settings.overlayOn),
     analyzer: () => toggle('analyzer'),
     capture: () => command('capture'),
+    pause: () => setPaused(!settings.paused),
   };
   for (const [name, key] of Object.entries(HOTKEYS)) {
     try {
@@ -1975,6 +1996,9 @@ if (!app.requestSingleInstanceLock()) {
       // "cpu one": as the tray's Processor use does.
       const cpu = /cpu (\w+)/.exec(text);
       if (cpu) setCpu(cpu[1]);
+      // "pause" / "resume": as the overlay's Stop and Start do.
+      if (/^pause\s*$/m.test(text)) setPaused(true);
+      if (/^resume\s*$/m.test(text)) setPaused(false);
       // "marks <file.json>": as if the analyzer sent that payload ("marks
       // off" clears). Without a game window they go over --marks-rect.
       const mk = /^marks (\S+)\s*$/m.exec(text);

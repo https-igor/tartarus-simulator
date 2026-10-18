@@ -89,7 +89,8 @@
   };
 
   async function sync() {
-    if (!C.agreed()) return;
+    // Stopped by the player in the app: nothing is taken up again.
+    if (!C.agreed() || game.paused) return;
     const st = C.state;
     if (game.log && !stoppedLog && (st.log === 'off' || game.log.path !== logFor)) {
       if (st.log !== 'off') C.stopLog();
@@ -278,7 +279,7 @@
       return;
     }
     onSince = 0;
-    if (!C.agreed() || !game.running || stoppedWindow || sharing || Date.now() < retryAt) return;
+    if (!C.agreed() || !game.running || game.paused || stoppedWindow || sharing || Date.now() < retryAt) return;
     retryAt = Date.now() + retryWait;
     retryWait = Math.min(60000, retryWait * 2);
     sync();
@@ -312,7 +313,14 @@
     // The game's window changed as it runs (a launcher with its title was
     // taken first, reports 371 and 372): shared again.
     const moved = g.running && game.running && g.window && game.window && g.window !== game.window;
+    const pausedNow = !!g.paused && !game.paused;
     game = g;
+    // Stopped in the app: the log and the window share are let go.
+    if (pausedNow) {
+      if (C.state.log !== 'off') C.stopLog();
+      if (C.state.window === 'on') C.stopWindow();
+      logFor = '';
+    }
     if (moved && C.state.window === 'on') {
       C.stopWindow();
       retryAt = 0;
@@ -331,7 +339,7 @@
   }
   D.onGame(onGame);
   D.onCommand((cmd) => {
-    if (cmd === 'capture') C.captureNow('manual');
+    if (cmd === 'capture' && !game.paused) C.captureNow('manual');
     // The player answered about sharing the game's screen: try again now.
     if (cmd === 'share-again') {
       retryAt = 0;
