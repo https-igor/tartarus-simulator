@@ -1201,16 +1201,20 @@
 
   // The move the strategy would play now, as an action object.
   function decide(st, params, random) {
-    const ctx = context(st, params || paramsFor(st));
-    const P = ctx.P;
     const roll = random || Math.random;
-    if (st.phase === 'ended') return null;
-    if (st.pending.length) {
+    if (st.phase !== 'ended' && st.pending.length) {
+      // An offer reads only the weights and the tier values (pickGift,
+      // wantsReroll, pickTool), as context() would make them.
+      const P = withDefaults(params || paramsFor(st));
+      const ctx = { P, v: tierValues(P) };
       const choice = st.pending[0];
       if (choice.kind === 'gift') return { type: 'choose', id: pickGift(st, ctx, choice.options, roll) };
       if (choice.kind === 'tool' && wantsReroll(st, P, choice.options)) return { type: 'reroll' };
       return { type: 'choose', id: pickTool(st, P, choice.options) };
     }
+    const ctx = context(st, params || paramsFor(st));
+    const P = ctx.P;
+    if (st.phase === 'ended') return null;
     // A chain waiting for a pick takes the meal worth the most, or stops
     // (the game's Cancel) when none is worth eating.
     if (st.chaining) {

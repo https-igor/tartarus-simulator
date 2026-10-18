@@ -497,9 +497,21 @@
     return makeInmate(state, beast, tier);
   }
 
-  const boardCells = (state) => state.cells.filter((c) => !c.sealed && c.inmate);
-  const boardInmates = (state) => boardCells(state).map((c) => c.inmate);
-  const cellOf = (state, id) => state.cells.find((c) => c.inmate && c.inmate.id === id) || null;
+  // Plain loops: the solver's playouts call these all the time.
+  function boardCells(state) {
+    const out = [];
+    for (const c of state.cells) if (!c.sealed && c.inmate) out.push(c);
+    return out;
+  }
+  function boardInmates(state) {
+    const out = [];
+    for (const c of state.cells) if (!c.sealed && c.inmate) out.push(c.inmate);
+    return out;
+  }
+  function cellOf(state, id) {
+    for (const c of state.cells) if (c.inmate && c.inmate.id === id) return c;
+    return null;
+  }
 
   function boardCellOf(state, id) {
     const cell = cellOf(state, id);
