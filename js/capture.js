@@ -639,7 +639,17 @@
   // shared screen, the frame is cut to the game window's area here, before
   // it leaves this function, and none is taken unless the game is the window
   // in front: nothing else on the screen is ever read, kept or sent.
-  async function grab() {
+  // One look at a time: the browser turns away a frame asked for while
+  // another is on its way, so the stillness watch's looks and the picture
+  // itself wait their turn.
+  let grabbing = Promise.resolve();
+  function grab() {
+    const next = grabbing.then(grabOnce, grabOnce);
+    grabbing = next.catch(() => null);
+    return next;
+  }
+
+  async function grabOnce() {
     lastWhy = '';
     if (!mayCapture()) {
       stopIfOff();
