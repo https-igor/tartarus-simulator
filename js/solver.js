@@ -1431,8 +1431,54 @@
   const plainKept = new WeakSet();
   const plain = (x) => (typeof x === 'object' && x !== null && plainKept.has(x)) || jsonPlain(x);
   const canShare = (st) => plain(st.params) && plain(st.eventPool);
+  // The engine's board fields, in newGame's order: a board laid out so is
+  // copied as one fixed-shape literal (faster than spread on a big object).
+  const STATE_KEYS = ['v', 'mode', 'scenario', 'seed', 'rng', 'params', 'day', 'maxDays', 'startEvent', 'phase', 'position', 'destinations', 'chain', 'event', 'cells', 'vault', 'cache', 'tools', 'pending', 'objective', 'milestone', 'used', 'chaining', 'eventPool', 'prey', 'nextId', 'log', 'stats', 'result', 'destBase', 'ratway'];
+  const fastField = (x) => (typeof x === 'object' ? (x === null ? null : copyFast(x)) : typeof x === 'number' && !Number.isFinite(x) ? null : x);
+  function trialCloneLaidOut(st, share) {
+    let i = 0;
+    for (const k in st) if (k !== STATE_KEYS[i++]) return null;
+    if (i !== 31) return null;
+    const { v, mode, scenario, seed, rng, params, day, maxDays, startEvent, phase, position, destinations, chain, event, cells, vault, cache, tools, pending, objective, milestone, used, chaining, eventPool, prey, nextId, stats, result, destBase, ratway } = st;
+    if (unfit(v) || unfit(mode) || unfit(scenario) || unfit(seed) || unfit(rng) || unfit(params) || unfit(day) || unfit(maxDays) || unfit(startEvent) || unfit(phase) || unfit(position) || unfit(destinations) || unfit(chain) || unfit(event) || unfit(cells) || unfit(vault) || unfit(cache) || unfit(tools) || unfit(pending) || unfit(objective) || unfit(milestone) || unfit(used) || unfit(chaining) || unfit(eventPool) || unfit(prey) || unfit(nextId) || unfit(stats) || unfit(result) || unfit(destBase) || unfit(ratway)) return null;
+    return {
+      v: fastField(v),
+      mode: fastField(mode),
+      scenario: fastField(scenario),
+      seed: fastField(seed),
+      rng: fastField(rng),
+      params: share && typeof params === 'object' ? params : fastField(params),
+      day: fastField(day),
+      maxDays: fastField(maxDays),
+      startEvent: fastField(startEvent),
+      phase: fastField(phase),
+      position: fastField(position),
+      destinations: fastField(destinations),
+      chain: fastField(chain),
+      event: fastField(event),
+      cells: typeof cells === 'object' && cells !== null ? copyCells(cells) : fieldCopy(cells),
+      vault: fastField(vault),
+      cache: fastField(cache),
+      tools: fastField(tools),
+      pending: fastField(pending),
+      objective: fastField(objective),
+      milestone: fastField(milestone),
+      used: fastField(used),
+      chaining: fastField(chaining),
+      eventPool: share && typeof eventPool === 'object' ? eventPool : fastField(eventPool),
+      prey: fastField(prey),
+      nextId: fastField(nextId),
+      log: [],
+      stats: fastField(stats),
+      result: fastField(result),
+      destBase: fastField(destBase),
+      ratway: fastField(ratway),
+    };
+  }
   function trialClone(st, share) {
     if (!hasOwn.call(st, 'log') || Array.isArray(st) || typeof st.toJSON === 'function') return clone(st);
+    const laidOut = trialCloneLaidOut(st, share);
+    if (laidOut) return laidOut;
     const out = { ...st };
     for (const k in out) {
       if (!hasOwn.call(out, k)) continue;
