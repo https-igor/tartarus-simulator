@@ -192,6 +192,43 @@
     return out;
   }
 
+  // Tier values for a weights object (merged weights are never changed).
+  const powers = new WeakMap();
+  function tierValues(P) {
+    let v = powers.get(P);
+    if (!v) powers.set(P, (v = [0, 1, 2, 3, 4, 5].map((t) => P.tierBase ** t)));
+    return v;
+  }
+
+  // The odds behind a door and their worth, kept for the last door weights
+  // seen (compared number by number, so a changed list is never reused).
+  let doorKept = null;
+  function doorOdds(weights, hook, v) {
+    const k = doorKept;
+    if (k && k.hook === hook && k.v === v && k.w.length === weights.length) {
+      let same = true;
+      for (let i = 0; i < weights.length; i++) if (k.w[i] !== weights[i]) same = false;
+      if (same) return k;
+    }
+    // The rarity odds behind a door: the Sorting Hook keeps out Normals.
+    const doorWeights = weights.slice();
+    if (hook && doorWeights.slice(1).some((x) => x > 0)) doorWeights[0] = 0;
+    const openDist = normalize(doorWeights);
+    const out = { w: weights.slice(), hook, v, openDist, openValue: openDist.reduce((sum, p, t) => sum + p * v[t], 0) };
+    if (weights.every((x) => typeof x === 'number')) doorKept = out;
+    return out;
+  }
+
+  // The last signature's memo, so most moves skip building the key.
+  let memoKept = null;
+  function memoFor(pid, doubleFrom, flags) {
+    const k = memoKept;
+    if (k && k.pid === pid && k.doubleFrom === doubleFrom && k.flags === flags && k.memo.size <= MEMO_LIMIT) return k.memo;
+    const memo = sharedMemo(`${pid},${doubleFrom},${flags}`);
+    memoKept = { pid, doubleFrom, flags, memo };
+    return memo;
+  }
+
   // Everything a decision needs, computed once per position.
   function context(st, params) {
     const P = withDefaults(params);
@@ -203,20 +240,33 @@
     const maul = has(st, 'maul');
     // Under Cage Fight, both meals at every rarity.
     const doubleFrom = T.cageFight && T.cageFight(st) ? 0 : Number.isFinite(st.params.doubleEatTier) ? st.params.doubleEatTier : T.SECOND_MEAL ? T.DEFAULT_PARAMS.doubleEatTier : RAINBOW;
-    const v = [0, 1, 2, 3, 4, 5].map((t) => P.tierBase ** t);
-    // The rarity odds behind a door: the Sorting Hook keeps out Normals.
-    const doorWeights = st.params.tierWeights.slice();
-    if (has(st, 'hook') && doorWeights.slice(1).some((x) => x > 0)) doorWeights[0] = 0;
-    const openDist = normalize(doorWeights);
+    const v = tierValues(P);
+    const { openDist, openValue } = doorOdds(st.params.tierWeights, has(st, 'hook'), v);
     // With the vault full (T.VAULT_SLOTS), a would-be Rainbow stays Supreme.
     const vaultFull = !!T.VAULT_SLOTS && st.vault.length >= T.VAULT_SLOTS;
     const R = vaultFull ? v[T.SUPREME] : v[RAINBOW] * P.rainbowMult;
-    const sealed = st.cells.filter((c) => c.sealed).length;
-    // Long-Chained Shackles: what +1 tier on a random inmate is worth.
-    const board = st.cells.filter((c) => !c.sealed && c.inmate && c.inmate.tier < RAINBOW);
-    const lift = board.reduce((sum, c) => sum + (c.inmate.tier + 1 >= RAINBOW ? R : v[c.inmate.tier + 1]) - v[c.inmate.tier], 0) / Math.max(1, board.length);
-    // Two tiers for every inmate on the block (Usurpation IV), and for a random one.
-    const allLift2 = board.reduce((sum, c) => sum + (c.inmate.tier + 2 >= RAINBOW ? R : v[c.inmate.tier + 2]) - v[c.inmate.tier], 0);
+    // One pass over the cells, summing in the cells' order as before:
+    // locked doors; the open board below Rainbow; Long-Chained Shackles'
+    // +1 tier on a random inmate (lift) and two tiers for every inmate
+    // (allLift2, Usurpation IV); the Maiden's count by tier; the board's
+    // worth (the Scapegoat's loss).
+    let sealed = 0;
+    let boardCount = 0;
+    let liftSum = 0;
+    let allLift2 = 0;
+    let worth = 0;
+    const tierCounts = [0, 0, 0, 0, 0];
+    for (const c of st.cells) {
+      if (c.sealed) sealed += 1;
+      if (c.sealed || !c.inmate || !(c.inmate.tier < RAINBOW)) continue;
+      const t = c.inmate.tier;
+      boardCount += 1;
+      liftSum = liftSum + (t + 1 >= RAINBOW ? R : v[t + 1]) - v[t];
+      allLift2 = allLift2 + (t + 2 >= RAINBOW ? R : v[t + 2]) - v[t];
+      worth = worth + v[t];
+      if (t === 0 || t === 1 || t === 2 || t === 3 || t === 4) tierCounts[t] += 1;
+    }
+    const lift = liftSum / Math.max(1, boardCount);
     const goal = st.objective && st.objective.id === 'walk' && !st.milestone && st.params.rewards ? T.OBJECTIVES.walk.need - st.objective.progress : 0;
     // Undercurrents: the Prison Incidents it still needs, while it pays a tool.
     const incidents = st.objective && st.objective.id === 'incident' && !st.milestone && st.params.rewards && T.OBJECTIVES.incident ? T.OBJECTIVES.incident.need - st.objective.progress : 0;
@@ -225,9 +275,16 @@
     const fight = T.cageFight ? T.cageFight(st) : false;
     const chainStop = T.canStopChain ? T.canStopChain(st) : false;
     const revenge = has(st, 'revenge') && sealed > 0;
+    const saw = has(st, 'saw');
+    const whip = has(st, 'whip');
+    const muzzle = has(st, 'muzzle');
+    const collar = has(st, 'collar');
+    const maiden = has(st, 'maiden');
+    const scapegoat = has(st, 'scapegoat') && boardCount >= 3;
     let pid = paramIds.get(P);
     if (!pid) paramIds.set(P, (pid = ++nextParamId));
-    const sig = [pid, doubleFrom, vaultFull, chainStop, fight, revenge, skewer, crown, maul, has(st, 'saw'), has(st, 'whip'), has(st, 'muzzle'), has(st, 'collar')].join(',');
+    // The flags as bits: the same memo for the same flags as before.
+    const flags = (vaultFull ? 1 : 0) | (chainStop ? 2 : 0) | (fight ? 4 : 0) | (revenge ? 8 : 0) | (skewer ? 16 : 0) | (crown ? 32 : 0) | (maul ? 64 : 0) | (saw ? 128 : 0) | (whip ? 256 : 0) | (muzzle ? 512 : 0) | (collar ? 1024 : 0);
     return {
       st,
       P,
@@ -239,13 +296,13 @@
       fight,
       v,
       R,
-      saw: has(st, 'saw'),
-      whip: has(st, 'whip'),
-      muzzle: has(st, 'muzzle'),
+      saw,
+      whip,
+      muzzle,
       skewer,
       crown,
       maul,
-      collar: has(st, 'collar'),
+      collar,
       revenge,
       axeDoors: has(st, 'axe') ? Math.min(2, sealed) : 0,
       dogtag: has(st, 'dogtag'),
@@ -256,33 +313,33 @@
       forged: has(st, 'forged'),
       fire: has(st, 'fire'),
       // Severed Iron Maiden: how many inmates of each tier are on the block.
-      maiden: has(st, 'maiden') ? [0, 1, 2, 3, 4].map((t) => board.filter((c) => c.inmate.tier === t).length) : null,
+      maiden: maiden ? tierCounts : null,
       // Scapegoat's Guillotine, with 2 or more others beside the warden's
       // inmate: a swap comes in above the rarity it replaces, and 2 random
       // inmates go (what they're worth on average).
-      scapegoat: has(st, 'scapegoat') && board.length >= 3 ? { loss: (2 * board.reduce((sum, c) => sum + v[c.inmate.tier], 0)) / board.length } : null,
+      scapegoat: scapegoat ? { loss: (2 * worth) / boardCount } : null,
       // Burning Stake: a swap from below Legendary may come in Legendary.
       stake: has(st, 'stake'),
       // The highest tier worth swapping: higher with the Maiden, up to Rare
       // with the Burning Stake, and up to Supreme with the Guillotine (a
       // Supreme's swap comes in Chromatic). A swapMaxTier below 0 never
       // swaps, not even in a Tusk cell.
-      swapCap: P.swapMaxTier < 0 ? -1 : has(st, 'scapegoat') && board.length >= 3 ? T.SUPREME : Math.max(has(st, 'maiden') ? Math.max(P.swapMaxTier, P.maidenSwapTier) : P.swapMaxTier, has(st, 'stake') ? 2 : 0),
+      swapCap: P.swapMaxTier < 0 ? -1 : scapegoat ? T.SUPREME : Math.max(maiden ? Math.max(P.swapMaxTier, P.maidenSwapTier) : P.swapMaxTier, has(st, 'stake') ? 2 : 0),
       sealed,
-      lift: board.length ? lift : 0,
-      lift2: board.length ? allLift2 / board.length : 0,
+      lift: boardCount ? lift : 0,
+      lift2: boardCount ? allLift2 / boardCount : 0,
       allLift2,
-      shacklesLift: has(st, 'shackles') && board.length ? lift : 0,
-      boardCount: board.length,
+      shacklesLift: has(st, 'shackles') && boardCount ? lift : 0,
+      boardCount,
       goalLeft: goal,
       incidentsLeft: incidents,
       consumesLeft: consumes,
       scratchExtra: 1 + (st.params.scratchStacksBase ? 1 : 0),
       openDist,
-      openValue: openDist.reduce((sum, p, t) => sum + p * v[t], 0),
+      openValue,
       // The game's Cancel: a chain can stop after any bite.
       chainStop,
-      memo: sharedMemo(sig),
+      memo: memoFor(pid, doubleFrom, flags),
     };
   }
 
@@ -333,9 +390,18 @@
   // An eater of beast b at tier t takes the best meal it has. With none, the
   // chain ends and it keeps its tier, and with the game's Cancel it also
   // stops when no meal is worth eating (stopMargin).
+  // The memo key: t and b, the block's size under the Muzzle (the only time
+  // it counts), and the counts from tier t up (from Normal under Cage
+  // Fight), made in one call; counts below that are left at 0, so they
+  // never split the memo.
+  const fromCode = String.fromCharCode;
+  function feedKey(ctx, t, b, comp, crowd) {
+    const lo = ctx.fight ? 0 : t * 4;
+    const c = (i) => (i < lo ? 48 : 48 + comp[i]);
+    return fromCode(48 + t * 4 + b, ctx.muzzle ? 48 + crowd : 0, c(0), c(1), c(2), c(3), c(4), c(5), c(6), c(7), c(8), c(9), c(10), c(11), c(12), c(13), c(14), c(15), c(16), c(17), c(18), c(19));
+  }
   function feed(ctx, t, b, comp, crowd) {
-    let key = `${t}${b}${ctx.muzzle ? `m${crowd}` : ''}`;
-    for (let i = ctx.fight ? 0 : t * 4; i < 20; i++) key += String.fromCharCode(48 + comp[i]);
+    const key = feedKey(ctx, t, b, comp, crowd);
     const hit = ctx.memo.get(key);
     if (hit !== undefined) return hit;
     let out = -Infinity;
@@ -1268,6 +1334,48 @@
     }
     return out;
   }
+  const fieldCopy = (x) => (typeof x === 'object' ? (x === null ? null : copyJson(x)) : typeof x === 'number' && !Number.isFinite(x) ? null : x);
+  const INMATE_KEYS = ['id', 'beast', 'tier'];
+  function copyInmate(m) {
+    if (m === null || typeof m !== 'object' || Array.isArray(m) || m.toJSON !== undefined) return copyJson(m);
+    let i = 0;
+    for (const k in m) if (k !== INMATE_KEYS[i++]) return copyJson(m);
+    if (i !== 3) return copyJson(m);
+    const { id, beast, tier } = m;
+    if (unfit(id) || unfit(beast) || unfit(tier)) return copyJson(m);
+    return { id: fieldCopy(id), beast: fieldCopy(beast), tier: fieldCopy(tier) };
+  }
+  const CELL_KEYS = ['n', 'sealed', 'inmate', 'hidden', 'known', 'atLeast', 'scratch', 'nest', 'event', 'ivory', 'seen'];
+  function copyCell(c) {
+    if (Array.isArray(c) || c.toJSON !== undefined) return copyJson(c);
+    let i = 0;
+    for (const k in c) if (k !== CELL_KEYS[i++]) return copyJson(c);
+    if (i !== 11) return copyJson(c);
+    const { n, sealed, inmate, hidden, known, atLeast, scratch, nest, event, ivory, seen } = c;
+    if (unfit(n) || unfit(sealed) || unfit(inmate) || unfit(hidden) || unfit(known) || unfit(atLeast) || unfit(scratch) || unfit(nest) || unfit(event) || unfit(ivory) || unfit(seen)) return copyJson(c);
+    return {
+      n: fieldCopy(n),
+      sealed: fieldCopy(sealed),
+      inmate: typeof inmate === 'object' && inmate !== null ? copyInmate(inmate) : fieldCopy(inmate),
+      hidden: typeof hidden === 'object' && hidden !== null ? copyInmate(hidden) : fieldCopy(hidden),
+      known: fieldCopy(known),
+      atLeast: fieldCopy(atLeast),
+      scratch: fieldCopy(scratch),
+      nest: fieldCopy(nest),
+      event: fieldCopy(event),
+      ivory: fieldCopy(ivory),
+      seen: fieldCopy(seen),
+    };
+  }
+  function copyCells(cells) {
+    if (!Array.isArray(cells) || cells.toJSON !== undefined) return copyJson(cells);
+    const out = new Array(cells.length);
+    for (let i = 0; i < cells.length; i++) {
+      const x = cells[i];
+      out[i] = unfit(x) ? null : typeof x === 'object' && x !== null ? copyCell(x) : copyJson(x);
+    }
+    return out;
+  }
   // Would copyJson give back an equal value (same fields, same order)?
   function jsonPlain(v) {
     if (v === null || typeof v === 'string' || typeof v === 'boolean') return true;
@@ -1291,7 +1399,7 @@
       const x = out[k];
       if (k === 'log') out.log = [];
       else if (typeof x === 'object') {
-        if (x !== null && !(share && (k === 'params' || k === 'eventPool'))) out[k] = copyFast(x);
+        if (x !== null && !(share && (k === 'params' || k === 'eventPool'))) out[k] = k === 'cells' ? copyCells(x) : copyFast(x);
       } else if (typeof x === 'number') {
         if (!Number.isFinite(x)) out[k] = null;
       } else if (unfit(x)) return clone(st);
