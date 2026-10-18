@@ -1588,9 +1588,10 @@
 
   const sameAction = (a, b) => !!a && !!b && a.type === b.type && a.cell === b.cell && a.to === b.to && a.id === b.id && a.accept === b.accept && a.choice === b.choice;
 
-  // The standard error of the mean difference between two options' values on
-  // the same dice (rounds an option couldn't play are NaN and skipped).
-  function pairedSe(a, b) {
+  // The mean difference between two options' values on the same dice, and
+  // its standard error (rounds either couldn't play, or didn't play because
+  // racing dropped it, are NaN and skipped: only shared rounds count).
+  function pairedGap(a, b) {
     let n = 0;
     let sum = 0;
     let sq = 0;
@@ -1601,16 +1602,69 @@
       sum += d;
       sq += d * d;
     }
-    if (n < 2) return Infinity;
+    if (n < 2) return { n, gap: n ? sum : 0, se: Infinity };
     const m = sum / n;
-    return Math.sqrt(Math.max(0, sq / n - m * m) / n);
+    return { n, gap: m, se: Math.sqrt(Math.max(0, sq / n - m * m) / n) };
+  }
+  const pairedSe = (a, b) => pairedGap(a, b).se;
+
+  // Racing (successive elimination): once every option still in the race
+  // has `min` rounds, an option whose paired gap to the leader is more than
+  // `se` standard errors stops being played, and its share of the rounds
+  // goes to the contenders. The strategy's own pick needs `pickSe`, and the
+  // race never drops below 2 options. Looked at every `every` rounds.
+  // Why 4 SE is safe with repeated looks: for a truly tied option the
+  // chance of a 4 SE excursion at one look is 3e-5 (one-sided normal); over
+  // continuous monitoring from `min` to 50x `min` rounds the boundary
+  // crossing chance is still about 1e-3, and an option truly better than
+  // the leader is dropped far more rarely than that. tools/bench-racing.js
+  // measures how often the truly best option is dropped (none in its runs).
+  const RACE = { min: 30, se: 4, pickSe: 6, every: 8 };
+
+  // The rows to drop now (indexes into rows), by the rule above. Rows are
+  // { vals, policy, pruned }; works on one stepper's rows or on rows merged
+  // from several workers.
+  function raceDrops(rows, opts) {
+    const R = Object.assign({}, RACE, opts || {});
+    const live = [];
+    for (let i = 0; i < rows.length; i++) {
+      if (rows[i].pruned) continue;
+      let n = 0;
+      let sum = 0;
+      for (const x of rows[i].vals) {
+        if (Number.isNaN(x)) continue;
+        n += 1;
+        sum += x;
+      }
+      live.push({ i, row: rows[i], n, mean: n ? sum / n : -Infinity });
+    }
+    if (live.length <= 2 || live.some((l) => l.n < R.min)) return [];
+    live.sort((a, b) => b.mean - a.mean);
+    const leader = live[0].row;
+    const out = [];
+    let left = live.length;
+    // Worst first, so the 2 kept are the best of the rest.
+    for (let k = live.length - 1; k >= 1 && left > 2; k--) {
+      const { row, i } = live[k];
+      const { n, gap, se } = pairedGap(leader.vals, row.vals);
+      if (n < R.min || !(se > 0)) continue;
+      if (gap > (row.policy ? R.pickSe : R.se) * se) {
+        out.push(i);
+        left -= 1;
+      }
+    }
+    return out;
   }
 
-  // Ranks played-out rows ({ label, action, vals, best, ... })
+  // Ranks played-out rows ({ label, action, vals, best, pruned, ... })
   // by value, after `rounds` of `target`. The analyzer also merges the rows
   // several workers played out with it: rows whose vals line up round by
   // round keep their common dice, and so their paired margins.
+  // Rows racing dropped (pruned) come after the rest: their means are over
+  // fewer rounds, and `n` says how many. `gap` and `gapSe` compare each with
+  // the leader over the rounds both played.
   function summarize(rows, rounds, target, goal) {
+    let playouts = 0;
     const ranked = rows
       .map((r) => {
         let n = 0;
@@ -1622,24 +1676,30 @@
           sum += x;
           sq += x * x;
         }
+        playouts += n;
         const mean = n ? sum / n : 0;
         const sd = n > 1 ? Math.sqrt(Math.max(0, sq / n - mean * mean)) : 0;
-        return { row: r, mean, se: n > 1 ? sd / Math.sqrt(n) : 0, n };
+        return { row: r, mean, se: n > 1 ? sd / Math.sqrt(n) : 0, n, pruned: !!r.pruned };
       })
-      .sort((a, b) => b.mean - a.mean || b.row.best - a.row.best);
+      .sort((a, b) => a.pruned - b.pruned || b.mean - a.mean || b.row.best - a.row.best);
     const top = ranked[0];
-    const options = ranked.map(({ row, mean, se, n }) => ({
-      label: row.label,
-      action: row.action,
-      kind: row.kind,
-      mean,
-      se,
-      gapSe: row === top.row ? 0 : pairedSe(top.row.vals, row.vals),
-      n,
-      best: n ? row.best / n : 0,
-      policy: row.policy,
-    }));
-    return { done: rounds >= target || rows.length <= 1, rounds, goal, options };
+    const options = ranked.map(({ row, mean, se, n, pruned }) => {
+      const paired = row === top.row ? { gap: 0, se: 0 } : pairedGap(top.row.vals, row.vals);
+      return {
+        label: row.label,
+        action: row.action,
+        kind: row.kind,
+        mean,
+        se,
+        gap: paired.gap,
+        gapSe: paired.se,
+        n,
+        pruned,
+        best: n ? row.best / n : 0,
+        policy: row.policy,
+      };
+    });
+    return { done: rounds >= target || rows.length <= 1, rounds, playouts, goal, options };
   }
 
   // Plays every candidate out `rollouts` times and ranks them by value. Each
@@ -1650,8 +1710,14 @@
   // `stream` splits the work between workers: each plays its own rounds of
   // dice, and the pick and candidates are the same in all (summarize merges
   // them).
+  // `race` (on unless false; RACE's settings, or an object to override them)
+  // drops options that are clearly behind (raceDrops): a dropped row gets NaN
+  // for the rounds it sits out, so every row still has one value a round
+  // and the rounds line up. `playouts` caps the playouts in all (rounds
+  // with fewer options cost less, so more of them fit).
+  // drop(indexes) drops rows from outside (the analyzer's merged view).
   function solve(st, opts) {
-    const o = Object.assign({ rollouts: 400, seed: 1, stream: 0, params: null }, opts || {});
+    const o = Object.assign({ rollouts: 400, seed: 1, stream: 0, params: null, race: true, playouts: Infinity }, opts || {});
     const base = clone(st);
     // base is the solver's own copy, made by copyJson: JSON-plain, and
     // nothing writes into its params or event pool.
@@ -1664,16 +1730,30 @@
     const random = rng32(o.stream ? (o.seed ^ Math.imul(o.stream, 0x9e3779b1)) >>> 0 : o.seed);
     const pick = list.length ? decide(clone(base), o.params, rng32(o.seed ^ 0x5bd1e995)) : null;
     const goal = 'rainbows';
-    const rows = list.map((c) => ({ label: c.label, action: c.action, kind: c.kind || null, vals: [], best: 0, policy: sameAction(c.action, pick) }));
+    const rows = list.map((c) => ({ label: c.label, action: c.action, kind: c.kind || null, vals: [], best: 0, policy: sameAction(c.action, pick), pruned: false }));
+    const raceOpts = o.race && typeof o.race === 'object' ? Object.assign({}, RACE, o.race) : RACE;
     let round = 0;
-    const result = () => summarize(rows, round, o.rollouts, goal);
+    let spent = 0;
+    const live = () => rows.reduce((n, r) => n + (r.pruned ? 0 : 1), 0);
+    const result = () => {
+      const out = summarize(rows, round, o.rollouts, goal);
+      if (spent >= o.playouts) out.done = true;
+      return out;
+    };
     return {
       rows,
-      step(budgetMs) {
+      // maxRounds: at most this many more rounds (tools/bench-racing.js).
+      step(budgetMs, maxRounds) {
         const stop = Date.now() + (budgetMs || 50);
-        while (round < o.rollouts && rows.length > 1 && Date.now() < stop) {
+        const end = maxRounds > 0 ? round + maxRounds : Infinity;
+        while (round < o.rollouts && round < end && spent < o.playouts && rows.length > 1 && Date.now() < stop) {
           const seed = (random() * 4294967296) >>> 0;
           for (const row of rows) {
+            if (row.pruned) {
+              row.vals.push(NaN);
+              continue;
+            }
+            spent += 1;
             const trial = trialClone(base, share);
             hideFuture(trial, seed);
             if (!apply(trial, row.action).ok) {
@@ -1687,8 +1767,22 @@
             row.best += Math.max(0, ...trial.cells.filter((c) => !c.sealed && c.inmate).map((c) => c.inmate.tier), trial.vault.length ? RAINBOW : 0);
           }
           round += 1;
+          if (o.race && rows.length > 2 && round % raceOpts.every === 0) {
+            for (const i of raceDrops(rows, raceOpts)) {
+              rows[i].pruned = true;
+              rows[i].prunedAt = round;
+            }
+          }
         }
         return result();
+      },
+      drop(indexes) {
+        for (const i of indexes || []) {
+          const row = rows[i];
+          if (!row || row.pruned || live() <= 2) continue;
+          row.pruned = true;
+          row.prunedAt = round;
+        }
       },
     };
   }
@@ -1867,7 +1961,7 @@
     return null;
   }
 
-  const api = { DEFAULTS, PROFILES, paramsFor, instant, moveBetween, sameAction, decide, apply, playout, candidates, solve, summarize, chainOdds, patrolScores, devourScores, context, composition, clone, hideFuture, rng32, executionValue };
+  const api = { DEFAULTS, PROFILES, paramsFor, instant, moveBetween, sameAction, decide, apply, playout, candidates, solve, summarize, raceDrops, RACE, pairedGap, chainOdds, patrolScores, devourScores, context, composition, clone, hideFuture, rng32, executionValue };
   if (typeof module === 'object' && module.exports) module.exports = api;
   root.TartarusSolver = api;
 })(typeof window !== 'undefined' ? window : typeof self !== 'undefined' ? self : globalThis);

@@ -9,6 +9,8 @@
  *
  *   Options: --rollouts N (default 150), --positions N (default 12), --repeat N (default 3),
  *            --rewards on|off (default: positions alternate rewards on and off)
+ *            --race on|off (default off: the fingerprint is of the plain, even split;
+ *            tools/bench-racing.js measures racing)
  */
 'use strict';
 
@@ -26,6 +28,7 @@ const POSITIONS = Number(arg('positions', 12));
 const REPEAT = Number(arg('repeat', 3));
 const REWARDS = arg('rewards', null);
 const rewardsFor = (i) => (REWARDS === 'on' ? true : REWARDS === 'off' ? false : i % 2 === 0);
+const RACE = arg('race', 'off') === 'on';
 
 // Positions from real playouts: each seed's run is played with the strategy
 // and stopped after a different number of moves, so the set covers patrols,
@@ -54,7 +57,7 @@ function run(list) {
   const results = [];
   const t0 = process.hrtime.bigint();
   for (let k = 0; k < list.length; k++) {
-    const job = S.solve(list[k], { rollouts: ROLLOUTS, seed: k + 1 });
+    const job = S.solve(list[k], { rollouts: ROLLOUTS, seed: k + 1, race: RACE });
     let r;
     do r = job.step(1e9); while (!r.done);
     results.push(job.rows.map((row) => ({ label: row.label, vals: row.vals, best: row.best })));
@@ -72,9 +75,9 @@ for (let i = 0; i < REPEAT; i++) {
   best = Math.min(best, r.ms);
   results = r.results;
 }
-const playouts = options * ROLLOUTS;
+const playouts = results.reduce((n, rows) => n + rows.reduce((m, r) => m + r.vals.filter((v) => !Number.isNaN(v)).length, 0), 0);
 const hash = crypto.createHash('sha256').update(JSON.stringify(results)).digest('hex').slice(0, 16);
-console.log(`${list.length} positions, ${options} options, ${ROLLOUTS} rounds: ${playouts.toLocaleString()} playouts`);
+console.log(`${list.length} positions, ${options} options, ${ROLLOUTS} rounds${RACE ? ', racing' : ''}: ${playouts.toLocaleString()} playouts`);
 console.log(`best of ${REPEAT}: ${best.toFixed(0)} ms (${(playouts / (best / 1000)).toFixed(0)} playouts/s)`);
 console.log(`fingerprint: ${hash}`);
 
