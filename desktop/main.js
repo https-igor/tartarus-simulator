@@ -36,7 +36,17 @@ const arg = (name) => {
 };
 const flag = (name) => process.argv.includes(`--${name}`);
 
-const LIVE_SITE = 'https://blahdot3h.github.io/tartarus-simulator/';
+// A build for another copy of the site (a fork) says so in
+// build-config.json beside this file: { site, updates }. Without it, the
+// live site, and updates from this repo's GitHub releases.
+const BUILD = (() => {
+  try {
+    return JSON.parse(require('fs').readFileSync(require('path').join(__dirname, 'build-config.json'), 'utf8')) || {};
+  } catch (e) {
+    return {};
+  }
+})();
+const LIVE_SITE = typeof BUILD.site === 'string' && /^https:\/\//.test(BUILD.site) ? BUILD.site : 'https://blahdot3h.github.io/tartarus-simulator/';
 let SITE = arg('site') || process.env.TARTARUS_SITE || LIVE_SITE;
 if (!SITE.endsWith('/')) SITE += '/';
 const SITE_URL = new URL(SITE);
@@ -1892,7 +1902,8 @@ function reloadSite() {
 // The app itself updates from the GitHub releases, when it's installed.
 let updater = null;
 function startUpdater() {
-  if (!app.isPackaged || TEST) return;
+  // A fork's build doesn't take this repo's releases (they'd replace it).
+  if (!app.isPackaged || TEST || BUILD.updates === false) return;
   try {
     updater = require('electron-updater').autoUpdater;
   } catch (e) {
