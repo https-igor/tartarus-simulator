@@ -111,14 +111,19 @@
 
     if (a && a.reading) out.push(line('busy', `Reading the ${a.reading.kind === 'board' || a.reading.kind === 'manual' ? 'picture' : a.reading.kind}…`));
     const failed = a && a.lastRead && !a.lastRead.ok && !a.reading && Date.now() - a.lastRead.at < 120000;
-    if (failed) out.push(line('bad', `Couldn’t read the last picture: ${a.lastRead.reason || 'no board in it'}.`, button('Try again', 'capture')));
-    else if (f && f.lastFrame && !f.lastFrame.ok && Date.now() - f.lastFrame.at < 60000) out.push(line('warn', `No picture taken: ${f.lastFrame.why || 'the game window isn’t shared'}`));
+    // A screen with no board (the Riot, a popup) isn't a failure worth a red
+    // line: only a picture that should have had a board is.
+    const noBoard = failed && /no tartarus prison board/i.test(a.lastRead.reason || '');
+    if (failed && !noBoard && !sh.riot && !sh.runOver) out.push(line('bad', `Couldn’t read the last picture: ${a.lastRead.reason || 'no board in it'}.`, button('Try again', 'capture')));
+    else if (!failed && !sh.riot && !sh.paused && f && f.lastFrame && !f.lastFrame.ok && Date.now() - f.lastFrame.at < 60000) out.push(line('warn', `No picture taken: ${f.lastFrame.why || 'the game window isn’t shared'}`));
 
     if (a && a.toolsConfirm) out.push(line('warn', a.toolsConfirm, button('These are right', 'tools-ok'), button('Board', 'board')));
     // A game client not in English: a screen the reader didn't recognize.
     if (a && a.langMiss && Date.now() - a.langMiss.at < 120000) out.push(line('warn', a.langMiss.what === 'board' ? `Your game is in ${a.langMiss.lang}: check today's doors, and set the Replace and Consume decisions by hand on the board analyzer, and send it this board's screenshot once, to help it learn your language.` : `The ${a.langMiss.what} wasn't read (your game is in ${a.langMiss.lang}). Set it on the board analyzer, and send the screenshot from there.`, button('Board', 'board')));
     // The Warden's Treasure covers the board: the gift waits for a look at it.
-    if (a && a.treasureWait) out.push(line('warn', 'The Warden’s Treasure is open. Press View Prison Status in the game, wait a second on the board, then go back to the Treasure: the gift advice uses that board.', button('Advise anyway', 'treasure-now')));
+    // The Warden's Treasure: a provisional gift comes by itself; a look at
+    // the board (the eye, View Prison Status) confirms it.
+    if (a && a.treasureWait) out.push(line('info', a.move ? 'Provisional gift. To confirm it, press the eye (View Prison Status), wait a second on the board, then go back.' : 'The Warden’s Treasure is open: working out a gift…'));
     if (a && a.problems && a.problems.length) {
       out.push(line('warn', `The board needs a fix: ${a.problems[0]}`, button('Fix', 'fix', true)));
     } else if (a && a.has && a.working) {
@@ -131,10 +136,7 @@
         h('p', { class: 'eyebrow' }, 'Recommended'),
         h('p', { class: 'move' }, a.move),
         a.why ? h('p', { class: 'why' }, a.why) : null,
-        h('p', { class: 'meta' }, [
-          a.expect.replace(/^Expected: /, '').replace(/ Rainbows in the vault by the end of day (\d+)\.?$/, ' Rainbows expected by day $1').replace(/\.$/, ''),
-          a.status.replace(/^Live check: /, '').replace(/ playouts per option$/, ' playouts each'),
-        ].filter(Boolean).join(' · ')),
+        h('p', { class: 'meta' }, a.status.replace(/^Live check: /, '').replace(/ playouts per option$/, ' playouts each')),
         a.chain ? h('p', { class: 'alt' }, a.chain) : null,
         a.close && a.options[1] ? h('p', { class: 'alt' }, `About as good: ${a.options.find((o) => !o.best) ? a.options.find((o) => !o.best).label : a.options[1].label}`) : null,
       );
@@ -160,11 +162,36 @@
       quiet ? `Following the log, but no game events yet. ${ENABLE_LOG}`
         : f && f.log === 'on' ? `Following ${f.file || 'the log'}: ${(f.lines || 0).toLocaleString()} new lines, ${f.hits || 0} triggers${f.diag && f.diag.lastTriggerAt ? `, the last ${ago(f.diag.lastTriggerAt)}` : ''}` : 'The game log isn’t followed');
     dot($('dot-win'), f ? (f.window === 'on' ? true : state.game.running ? null : false) : false, f && f.window === 'on' ? `Sharing the game window${f.lastFrame ? `, last picture ${ago(f.lastFrame.at)}` : ''}` : 'The game window isn’t shared');
+    // Rainbows vaulted this run, from the log, and how many more the latest
+    // advice expects by the Riot.
+    const more = a && Number.isFinite(a.expectMore) ? a.expectMore : null;
+    $('score').textContent = state.game.running && !sh.collapsed && (sh.treasures > 0 || more !== null) ? `🌈 ${sh.treasures || 0}${more !== null ? ` · +${more.toFixed(1)} exp.` : ''}` : '';
     $('pause').textContent = sh.paused ? 'Start' : 'Stop';
     $('pause').classList.toggle('is-primary', !!sh.paused);
     $('report-menu').hidden = !state.menu;
     $('report-reading').hidden = !(a && a.canReportReading);
   }
+
+  // Dragging by the head, done here: a window that never takes the focus
+  // can't be moved by the window manager on Linux.
+  const head = document.querySelector('.head');
+  let drag = null;
+  head.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0 || e.target.closest('button')) return;
+    drag = { x: e.screenX, y: e.screenY, id: e.pointerId };
+    head.setPointerCapture(e.pointerId);
+    O.drag('start');
+  });
+  head.addEventListener('pointermove', (e) => {
+    if (drag && e.pointerId === drag.id) O.drag('move', e.screenX - drag.x, e.screenY - drag.y);
+  });
+  const dragEnd = (e) => {
+    if (!drag || e.pointerId !== drag.id) return;
+    drag = null;
+    O.drag('end');
+  };
+  head.addEventListener('pointerup', dragEnd);
+  head.addEventListener('pointercancel', dragEnd);
 
   document.addEventListener('click', (e) => {
     const b = e.target.closest('button');

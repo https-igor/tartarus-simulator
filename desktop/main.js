@@ -1316,6 +1316,7 @@ function setPaused(on) {
 }
 
 let siteUpdate = false;
+let runTreasures = 0; // Warden's Treasures opened this run (from the log): Rainbows vaulted
 let appUpdate = '';
 let shellExtra = { offline: '' };
 let agreed = null; // whether the player agreed on follow.html, once it says
@@ -1324,6 +1325,7 @@ function pushShell(patch) {
   send('overlay', 'shell', Object.assign({
     collapsed: settings.collapsed,
     paused: !!settings.paused,
+    treasures: runTreasures,
     riot,
     runOver,
     agreed,
@@ -1483,6 +1485,11 @@ ipcMain.on('site:riot', (e, on) => {
 let runOver = false;
 ipcMain.on('site:run', (e, what) => {
   if (!fromPage(e, 'follow')) return;
+  // A run's first day: its Rainbow count starts again.
+  if (what === 'day1' && runTreasures) {
+    runTreasures = 0;
+    pushShell();
+  }
   if (what === 'over' && !runOver) {
     runOver = true;
     note('run over: its record is closed, the analyzer cleared');
@@ -1519,6 +1526,11 @@ ipcMain.on('site:trigger', (e, kind) => {
   if (kind !== 'speed' && kind !== 'skip') {
     hideMarks();
     send('analyzer', 'command', 'marks-reset');
+  }
+  // Each Warden's Treasure is a Rainbow vaulted: the overlay shows the count.
+  if (kind === 'treasure') {
+    runTreasures += 1;
+    pushShell();
   }
 });
 let checked = null; // the counts at the last minute's note
@@ -1639,6 +1651,23 @@ ipcMain.on('site:advice', (e, data) => {
 ipcMain.on('site:marks', (e, payload) => {
   if (!fromPage(e, 'analyzer') || (payload && !small(payload))) return;
   setMarks(settings.paused ? null : payload);
+});
+
+// Dragging the overlay by its head (the page does it: a window that never
+// takes the focus can't be moved by the window manager on Linux).
+let dragFrom = null;
+ipcMain.on('overlay:drag', (e, phase, dx, dy) => {
+  const win = wins.overlay;
+  if (!sender(e, 'overlay') || !win || win.isDestroyed()) return;
+  if (phase === 'start') dragFrom = win.getBounds();
+  else if (phase === 'move' && dragFrom && Number.isFinite(dx) && Number.isFinite(dy)) win.setPosition(Math.round(dragFrom.x + dx), Math.round(dragFrom.y + dy));
+  else if (phase === 'end' && dragFrom) {
+    dragFrom = null;
+    const b = win.getBounds();
+    settings.overlay = { x: b.x, y: b.y };
+    overlayPlaced = true;
+    saveSettings();
+  }
 });
 
 // The overlay's buttons.

@@ -176,6 +176,14 @@
       nothing: shown(res) && !working && !rec && /^Nothing to decide/.test(move),
       stale: !!res && res.classList.contains('is-stale'),
       expect: rec ? paras.find((p) => /^Expected:/.test(p)) || '' : '',
+      // Rainbows the advice still expects from here: its expectation less
+      // those the loaded board has vaulted already (often none read).
+      expectMore: (() => {
+        const m = rec && /^Expected: ([\d.]+)/.exec(paras.find((p) => /^Expected:/.test(p)) || '');
+        if (!m) return null;
+        const b = boardNow();
+        return Math.max(0, Number(m[1]) - (b && Array.isArray(b.vault) ? b.vault.length : 0));
+      })(),
       chain: rec ? paras.find((p) => /^After this first bite/.test(p)) || '' : '',
       status: rec ? status : '',
       options,

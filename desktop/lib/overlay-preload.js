@@ -16,4 +16,7 @@ contextBridge.exposeInMainWorld('Overlay', {
   // pick-log, reload, restart
   command: (name) => ipcRenderer.send('overlay:command', String(name)),
   size: (height) => ipcRenderer.send('overlay:size', Number(height)),
+  // Dragging the card by its head: 'start', then how far the pointer moved
+  // since (dx, dy), then 'end'.
+  drag: (phase, dx, dy) => ipcRenderer.send('overlay:drag', String(phase), Number(dx) || 0, Number(dy) || 0),
 });

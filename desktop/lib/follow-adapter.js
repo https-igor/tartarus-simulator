@@ -218,7 +218,9 @@
   // needs them) and starts again back in the prison. The log goes on, to
   // hear when that is.
   let inRiot = false;
+  const DAY_ONE = /\[S16LastDay\] check cur=1 max=/;
   const riotWatch = (s) => {
+    if (DAY_ONE.test(s.line)) D.run('day1');
     if (RUN_OVER.test(s.line)) D.run('over');
     else if (RUN_NEW.test(s.line)) D.run('new');
     if (RIOT.test(s.line)) {
