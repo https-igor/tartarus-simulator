@@ -242,8 +242,17 @@ async function findLog() {
   logFoundBy = 'in the game folders';
   const roots = new Map();
   const addRoot = (p) => p && roots.set(path.resolve(p).toLowerCase(), path.resolve(p));
-  for (const [key, value] of [['HKCU\\Software\\Valve\\Steam', 'SteamPath'], ['HKLM\\SOFTWARE\\WOW6432Node\\Valve\\Steam', 'InstallPath'], ['HKLM\\SOFTWARE\\Valve\\Steam', 'InstallPath']]) addRoot(await regQuery(key, value));
-  addRoot('C:\\Program Files (x86)\\Steam');
+  if (process.platform === 'win32') {
+    for (const [key, value] of [['HKCU\\Software\\Valve\\Steam', 'SteamPath'], ['HKLM\\SOFTWARE\\WOW6432Node\\Valve\\Steam', 'InstallPath'], ['HKLM\\SOFTWARE\\Valve\\Steam', 'InstallPath']]) addRoot(await regQuery(key, value));
+    addRoot('C:\\Program Files (x86)\\Steam');
+  } else {
+    // Steam on Linux (the game under Proton writes its log beside itself,
+    // as on Windows): the usual installs, Debian's, and Flatpak's.
+    const home = require('os').homedir();
+    for (const p of ['.steam/steam', '.steam/root', '.steam/debian-installation', '.local/share/Steam', '.var/app/com.valvesoftware.Steam/.local/share/Steam']) {
+      if (statOf(path.join(home, p))) addRoot(fs.realpathSync(path.join(home, p)));
+    }
+  }
   const libraries = new Map(roots);
   for (const root of roots.values()) {
     try {
