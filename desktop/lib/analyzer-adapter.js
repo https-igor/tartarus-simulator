@@ -172,6 +172,7 @@
     // the status line how many games are played.
     const A = window.TartarusAnalyzer;
     const rec = A && typeof A.recommendation === 'function' ? A.recommendation() : null;
+    const likely = !rec && A && typeof A.likely === 'function' ? A.likely() : null;
     const move = text($('az-res-move'));
     const working = shown(res) && /Working it out/.test(move);
     const status = text($('az-res-status'));
@@ -179,8 +180,10 @@
     const num = (s) => Number(String(s).replace(/,/g, ''));
     return {
       has: shown(res),
-      move: rec ? rec.label : '',
-      why: rec ? rec.why || '' : '',
+      move: rec ? rec.label : likely ? likely.label : '',
+      why: rec ? rec.why || '' : likely ? likely.why || '' : '',
+      // The strategy's pick shown while the live check still runs.
+      likely: !rec && !!likely,
       working,
       progress: working && played ? Math.round((100 * num(played[1])) / Math.max(1, num(played[2]))) : null,
       nothing: shown(res) && !working && !rec && /^Nothing to decide/.test(move),

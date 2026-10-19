@@ -1670,8 +1670,16 @@
       .then(() => done(window.TartarusScan.choiceLayout ? window.TartarusScan.choiceLayout(imageData, 'treasure') : null))
       .catch(() => done(null));
   }
+  // While the live check runs, the strategy's own pick, shown at once as
+  // the likely move: the check kept it in ~96% of a run's decisions, and
+  // the advice switches only if the check finds a clearly better one.
+  function likely() {
+    if (reading || !fresh() || settled() || !solver.instant || solver.provisional) return null;
+    return Object.assign({}, solver.instant, { likely: true });
+  }
+
   function marks() {
-    const rec = !reading && fresh() && settled() ? recommendation() : null;
+    const rec = reading || !fresh() ? null : settled() ? recommendation() : likely();
     const M = window.TartarusMarks;
     const p = rec && M && view.n ? M.fromAdvice(rec, view.geometry, view.layout, model, { width: view.width, height: view.height, provisional: !!solver.provisional }) : null;
     if (!p) return null;
@@ -3468,6 +3476,8 @@
       sameReading: () => !!(reader.reading && JSON.stringify(normalize(reader.reading.model)) === JSON.stringify(model)),
       ask: () => ask(true),
       recommendation: () => (fresh() && settled() ? recommendation() : null),
+      // The strategy's pick while the live check runs (null once it's done).
+      likely: () => likely(),
       // The desktop app's marks over the game: the advice on the latest
       // picture (js/marks.js), or null. seeChoice: a Warden's Treasure's
       // picture ({ width, height, buffer }), for where its cards are.

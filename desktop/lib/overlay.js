@@ -129,6 +129,12 @@
     if (a && a.treasureWait) out.push(line('info', a.move ? 'Provisional gift. To confirm it, press the eye (View Prison Status), wait a second on the board, then go back.' : 'The Warden’s Treasure is open: working out a gift…'));
     if (a && a.problems && a.problems.length) {
       out.push(line('warn', `The board needs a fix: ${a.problems[0]}`, button('Fix', 'fix', true)));
+    } else if (a && a.has && a.working && a.likely && a.move) {
+      // The strategy's pick at once; the live check confirms it or switches.
+      out.push(h('div', null,
+        h('p', { class: 'eyebrow' }, `Likely · checking${a.progress !== null && a.progress !== undefined ? ` ${a.progress}%` : '…'}`),
+        h('p', { class: 'move' }, a.move),
+        a.why ? h('p', { class: 'why' }, a.why) : null));
     } else if (a && a.has && a.working) {
       out.push(line('busy', `Working out the best move${a.progress !== null && a.progress !== undefined ? `: ${a.progress}%` : '…'}`));
       if (a.flagged) out.push(line('warn', `${a.flagged} ${a.flagged === 1 ? 'cell' : 'cells'} to check against your game.`, button('Fix', 'fix')));
