@@ -263,6 +263,20 @@
     if (hint && hint.w === W && hint.h === H) {
       const was = { s: hint.s, tx: hint.tx, ty: hint.ty, score: score(levels[0], hint.s, hint.tx, hint.ty, false) };
       if (was.score >= 0.81 && was.score >= hint.score - 0.05) return Object.assign(grid(was, levels[0], 0.0025, 3, 0.5, 3), { hinted: true });
+      // loose (the reader worker's frames of one window, the board found
+      // there lately): a board darkened by a meal pick or partly under a
+      // popup matches its frame weakly (0.72-0.89 on the user's run), but
+      // stays where it was, and the search over every scale found it there
+      // anyway, at 2-3 s a picture (90% of those pictures' time). Taken there
+      // when it still matches as a board (0.65, scan's own bar). Under that
+      // (a meal pick's darker board, another screen), the search over every
+      // scale only ever found less, so it's skipped too: scan places a
+      // darkened board by its labels, and finds no board on other screens.
+      if (opts.loose) {
+        const near = grid(was, levels[0], 0.0025, 3, 0.5, 3);
+        if (near.score >= 0.65) return Object.assign(near, { hinted: true, loose: true });
+        if (opts.loose === 'skip') return Object.assign(near, { hinted: true, loose: true });
+      }
     }
     while (levels[levels.length - 1].w > 120 && levels[levels.length - 1].h > 60) {
       const l = levels[levels.length - 1];
@@ -731,6 +745,8 @@
 
   // Light, unsaturated glyphs in a box, grouped into lines, words and the
   // separate pieces of a line (like one card's text).
+  // The picture scan is reading, and its text boxes' lightness and blurs.
+  const textMemo = { img: null, map: null };
   function textLines(img, x0, y0, x1, y1, opts) {
     const o = Object.assign({ minH: 6, maxH: 60, s: 0.34 }, opts || {});
     // Text is any unsaturated pixel clearly brighter than its surroundings:
@@ -742,12 +758,27 @@
     const w = x1 - x0 + 1;
     const h = y1 - y0 + 1;
     if (w < 4 || h < 4) return [];
-    const lum = new Float32Array(w * h);
-    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
-      const [r, g, b] = rgbAt(img, x0 + x, y0 + y);
-      lum[y * w + x] = 0.299 * r + 0.587 * g + 0.114 * b;
+    // Within one scan, the same box is read at several contrast windows
+    // (and the Chromatic label's box again for View Prison Status): its
+    // lightness and each blur of it are worked out once (textMemo).
+    const memo = textMemo.img === img ? textMemo.map : null;
+    const key = `${x0},${y0},${x1},${y1}`;
+    let lum = memo && memo.get(key);
+    if (!lum) {
+      lum = new Float32Array(w * h);
+      const d = img.data;
+      for (let y = 0; y < h; y++) {
+        let o4 = ((y0 + y) * img.width + x0) * 4;
+        for (let x = 0; x < w; x++, o4 += 4) lum[y * w + x] = 0.299 * d[o4] + 0.587 * d[o4 + 1] + 0.114 * d[o4 + 2];
+      }
+      if (memo) memo.set(key, lum);
     }
-    const around = blur(lum, w, h, o.r || Math.max(3, Math.round(o.maxH / 3)));
+    const rad = o.r || Math.max(3, Math.round(o.maxH / 3));
+    let around = memo && memo.get(`${key},${rad}`);
+    if (!around) {
+      around = blur(lum, w, h, rad);
+      if (memo) memo.set(`${key},${rad}`, around);
+    }
     const found = blobs(img, x0, y0, x1, y1, (px, py) => {
       const i = (py - y0) * w + (px - x0);
       const l = lum[i];
@@ -2240,12 +2271,32 @@
   // next of the same size. opts.lang: the game's language ('en', 'zh', ...),
   // as the player set it: not English, door cards are read by their numbers.
   function scan(img, ref, opts) {
+    textMemo.img = img;
+    textMemo.map = new Map();
+    try {
+      return scanOnce(img, ref, opts);
+    } finally {
+      textMemo.img = null;
+      textMemo.map = null;
+    }
+  }
+
+  function scanOnce(img, ref, opts) {
     const t0 = Date.now();
     const gray = grayOf(img);
     const sharp = blur(gray, img.width, img.height, 1);
     const cache = opts && opts.cache;
-    let loc = locateBoard(img, gray, ref, { sharp, hint: cache && cache.loc });
-    if (cache && loc && loc.score >= 0.81) cache.loc = { w: img.width, h: img.height, s: loc.s, tx: loc.tx, ty: loc.ty, score: loc.score };
+    // A weak match at the last board's place is taken without the search
+    // over every scale (locateBoard's loose), and under scan's bar the
+    // search is skipped for up to 6 pictures in a row since the board last
+    // matched well there (a meal pick, the Treasure and instrument offers
+    // between boards); then it's searched for again, in case it moved.
+    const loose = !!(cache && cache.loc && opts.incremental !== false) && ((cache.weak || 0) < 6 ? 'skip' : true);
+    let loc = locateBoard(img, gray, ref, { sharp, hint: cache && cache.loc, loose });
+    if (cache && loc && loc.score >= 0.81) {
+      cache.loc = { w: img.width, h: img.height, s: loc.s, tx: loc.tx, ty: loc.ty, score: loc.score };
+      cache.weak = 0;
+    } else if (cache) cache.weak = (cache.weak || 0) + 1;
     // Real boards match their frame at 0.81 or more at every size tested;
     // instrument picks, popups and other screens stay near 0.5 or under. A
     // darkened board (a devour's meal pick) also matches weakly, but its
