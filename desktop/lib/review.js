@@ -11,7 +11,7 @@
   const BEASTS = { mammoth: 'Mammoth', lion: 'Lion', wolf: 'Wolf', rat: 'Rat' };
   const KINDS = { board: 'Board', manual: 'Picture (pressed)', instruments: 'Instrument pick', objective: 'Objective', treasure: 'Warden’s Treasure', event: 'Event' };
   const COMMANDS = { capture: 'Took a picture', fix: 'Pressed Fix', recheck: 'Pressed Recheck', 'tools-ok': 'Confirmed the instruments', report: 'Reported a wrong reading', 'report-new': 'Reported something new', board: 'Opened the board', collapse: 'Folded or unfolded the overlay', lock: 'Locked or unlocked the overlay' };
-  let data = null; // { name, base, entries }
+  let data = null; // { name, base, entries, picturesGone }
 
   function h(tag, attrs, ...kids) {
     const el = document.createElement(tag);
@@ -206,7 +206,9 @@
       if (!items.length && !s.picture) return;
       shown += 1;
       const p = s.picture;
-      const shot = p && p.file ? h('div', { class: 'shot' }, h('img', { src: data.base + p.file, alt: `The picture at ${time(p.at)}`, loading: 'lazy' })) : h('div', { class: 'shot' }, h('div', { class: 'noshot' }, p ? 'No picture with this one.' : 'Before the first picture.'));
+      // An older run keeps its record but not its pictures (main.js keeps
+      // those of the last few runs only).
+      const shot = p && p.file && !data.picturesGone ? h('div', { class: 'shot' }, h('img', { src: data.base + p.file, alt: `The picture at ${time(p.at)}`, loading: 'lazy' })) : h('div', { class: 'shot' }, h('div', { class: 'noshot' }, !p ? 'Before the first picture.' : p.file && data.picturesGone ? 'Picture not kept: only the last runs keep their pictures.' : 'No picture with this one.'));
       const card = h('section', { class: 'step', id: `step-${i + 1}` },
         h('div', { class: 'step-head' }, h('b', null, `#${i + 1}`), p ? `${time(p.at)} · ${KINDS[p.kind] || p.kind}${p.fresh ? ' (start of a run)' : ''}` : '', fixed ? h('span', { class: 'warn' }, 'fixed by hand') : null),
         shot,
@@ -214,7 +216,7 @@
       );
       main.append(card);
     });
-    $('count').textContent = `${shown} of ${steps.length} steps · ${data.entries.filter((e) => e.type === 'picture').length} pictures`;
+    $('count').textContent = `${shown} of ${steps.length} steps · ${data.entries.filter((e) => e.type === 'picture').length} pictures${data.picturesGone ? ' (not kept)' : ''}`;
   }
 
   // A picture opens full width, and back.
@@ -227,7 +229,7 @@
     const list = await R.sessions();
     const sel = $('session');
     const was = keep ? sel.value : '';
-    sel.replaceChildren(...list.map((s) => h('option', { value: s.name }, `${s.name.replace('T', ' ').replace(/-(\d\d)-(\d\d)$/, ':$1:$2')} UTC · ${s.pictures} pictures, ${s.advice} advice, ${s.edits} fixes`)));
+    sel.replaceChildren(...list.map((s) => h('option', { value: s.name }, `${s.name.replace('T', ' ').replace(/-(\d\d)-(\d\d)$/, ':$1:$2')} UTC · ${s.pictures} pictures${s.picturesGone && s.pictures ? ' (not kept)' : ''}, ${s.advice} advice, ${s.edits} fixes`)));
     if (!list.length) {
       data = null;
       render();
