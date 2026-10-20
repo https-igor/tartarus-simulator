@@ -1326,6 +1326,12 @@ function setPaused(on) {
 
 let siteUpdate = false;
 let runTreasures = 0; // Warden's Treasures opened this run (from the log): Rainbows vaulted
+// Chromatic sounds heard this run (from the log), by their log times: the
+// Rainbows vaulted, the last move before the Riot's included. A Treasure's
+// window shown again (the board looked at first) counts as a trigger again;
+// a sound doesn't, so the sounds are the count once there are any.
+const runRainbows = new Set();
+const rainbowCount = () => runRainbows.size || runTreasures;
 let appUpdate = '';
 let shellExtra = { offline: '' };
 let agreed = null; // whether the player agreed on follow.html, once it says
@@ -1334,7 +1340,7 @@ function pushShell(patch) {
   send('overlay', 'shell', Object.assign({
     collapsed: settings.collapsed,
     paused: !!settings.paused,
-    treasures: runTreasures,
+    treasures: rainbowCount(),
     riot,
     runOver,
     agreed,
@@ -1495,8 +1501,9 @@ let runOver = false;
 ipcMain.on('site:run', (e, what) => {
   if (!fromPage(e, 'follow')) return;
   // A run's first day: its Rainbow count starts again.
-  if (what === 'day1' && runTreasures) {
+  if (what === 'day1' && rainbowCount()) {
     runTreasures = 0;
+    runRainbows.clear();
     pushShell();
   }
   if (what === 'over' && !runOver) {
@@ -1520,6 +1527,20 @@ ipcMain.on('site:settled', (e, s) => {
   if (!fromPage(e, 'follow') || !s || typeof s !== 'object') return;
   const diffs = Array.isArray(s.diffs) ? s.diffs.slice(0, 40).map(Number).filter(Number.isFinite).join(' ') : '';
   note(`settled: ${Math.round(Number(s.ms) || 0)} ms of ${Math.round(Number(s.of) || 0)}${s.early ? ', early picture' : ''}; diffs ${diffs || '-'}`);
+});
+// A Chromatic's sound: a Rainbow vaulted. It goes into the run's record as
+// a line of its own (with the log's time of it), so the run's count holds
+// even when the Riot comes before any picture after the move that made it
+// (tools/run-review.js counts these lines). A time heard before (the log
+// read again) isn't counted twice.
+ipcMain.on('site:rainbow', (e, at) => {
+  if (!fromPage(e, 'follow')) return;
+  const logAt = String(at || '').slice(0, 30);
+  if (logAt && runRainbows.has(logAt)) return;
+  runRainbows.add(logAt || `#${runRainbows.size}`);
+  note(`Rainbow: a Chromatic's sound in the log (${runRainbows.size} this run)`);
+  recordEvent({ type: 'log-rainbow', logAt, count: runRainbows.size });
+  pushShell();
 });
 ipcMain.on('site:clicked', (e) => {
   if (!fromPage(e, 'follow')) return;

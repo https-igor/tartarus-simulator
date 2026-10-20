@@ -198,7 +198,7 @@
             boardShown = JSON.stringify(e.board);
           }
         } else if (showOther) {
-          const label = e.type === 'command' ? COMMANDS[e.cmd] || `Pressed ${e.cmd}` : e.type === 'game' ? 'The game started' : e.type === 'game-closed' ? 'The game closed' : e.type === 'riot' ? 'The Riot: the fight began (overlay folded)' : e.type === 'riot-over' ? 'Back in the prison' : e.type === 'run-over' ? 'The run is over (Ignore on the Riot screen)' : e.type;
+          const label = e.type === 'command' ? COMMANDS[e.cmd] || `Pressed ${e.cmd}` : e.type === 'game' ? 'The game started' : e.type === 'game-closed' ? 'The game closed' : e.type === 'riot' ? 'The Riot: the fight began (overlay folded)' : e.type === 'riot-over' ? 'Back in the prison' : e.type === 'run-over' ? 'The run is over (Ignore on the Riot screen)' : e.type === 'log-rainbow' ? `A Rainbow: a Chromatic’s sound in the game log (${e.count || '?'} this run)` : e.type;
           items.push(h('p', { class: 'other' }, `${time(e.at)} · ${label}`));
         }
       }

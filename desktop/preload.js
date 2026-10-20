@@ -50,6 +50,9 @@ contextBridge.exposeInMainWorld('TartarusDesktop', {
   // The run is over (Ignore on the Riot screen), or a new one begins
   // (follow.html only): 'over' or 'new'.
   run: (what) => ipcRenderer.send('site:run', String(what)),
+  // A Chromatic's sound in the log, with the log's time of it (follow.html
+  // only): a Rainbow vaulted.
+  rainbow: (at) => ipcRenderer.send('site:rainbow', String(at || '').slice(0, 30)),
   // To the overlay: what Auto Screenshot Mode is doing, and the advice.
   follow: (data) => ipcRenderer.send('site:follow', data),
   advice: (data) => ipcRenderer.send('site:advice', data),
