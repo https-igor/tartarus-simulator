@@ -219,8 +219,15 @@
   // hear when that is.
   let inRiot = false;
   const DAY_ONE = /\[S16LastDay\] check cur=1 max=/;
+  // A Chromatic prisoner's sound (not its _Fly to the vault): a Rainbow
+  // vaulted. One a Rainbow, each with its Warden's Treasure, in every run of
+  // the logs checked (29 runs), the last move before the Riot included: the
+  // run's count, even when no picture comes after that move. Its time in the
+  // log goes with it (the time only, never the line), for the record.
+  const RAINBOW = /UI_S16_Premium_Quality\b/;
   const riotWatch = (s) => {
     if (DAY_ONE.test(s.line)) D.run('day1');
+    if (RAINBOW.test(s.line) && typeof D.rainbow === 'function') D.rainbow(s.at);
     if (RUN_OVER.test(s.line)) D.run('over');
     else if (RUN_NEW.test(s.line)) D.run('new');
     if (RIOT.test(s.line)) {

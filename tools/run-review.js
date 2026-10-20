@@ -8,7 +8,7 @@
  * the result, and the reader's problems. A JSON with the same data is
  * written next to the report, so many runs can be pooled later.
  *
- *   node tools/run-review.js [<record folder or record.jsonl>] [--out file.md|file.html] [--all]
+ *   node tools/run-review.js [<record folder or record.jsonl>] [--out file.md|file.html] [--all] [--log UE_game.log]...
  *
  *   With no folder: the newest run under the app's records folder
  *   (~/.config/Tartarus Overlay/records, or %APPDATA% on Windows).
@@ -16,6 +16,12 @@
  *               FILE.json beside it; without it, Markdown goes to stdout.
  *   --all       every run folder: one pooled report (odds, advice followed,
  *               Rainbows) with a line a run.
+ *   --log FILE  the game log the run was played with (again for each of its
+ *               rotated backups): its Chromatic sounds settle whether the
+ *               last move made a Rainbow, for runs recorded before the app
+ *               wrote them into the record (see "Rainbows from the game
+ *               log's sounds"). Read as a stream, and matched to the record
+ *               by the times of the events both have, whatever the log's clock.
  *
  * What the player did isn't in the record: it is inferred by comparing the
  * board a decision was made on with the next board read, so it can be
@@ -26,7 +32,9 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const readline = require('readline');
 const T = require('../js/engine.js');
+const Cues = require('../js/cues.js');
 
 const P = T.DEFAULT_PARAMS;
 const TIER = ['Normal', 'Magic', 'Rare', 'Legendary', 'Supreme', 'Rainbow'];
@@ -300,6 +308,162 @@ function inferManage(B, N, group, out) {
   return out(null, 'unknown: nothing on the next board tells', false);
 }
 
+// ---------- Rainbows from the game log's sounds ----------
+// Every Chromatic prisoner plays UI_S16_Premium_Quality as it leaves for
+// the vault: in the 29 runs of the logs checked, one a Rainbow, each with
+// its Warden's Treasure (S16BoardColoredPop and its Confirm), the last move
+// before the Riot included. So the sounds settle what no board can when the
+// Riot comes straight after the last move: whether it made a Rainbow. They
+// come from, in order:
+//   the record's own lines (log-rainbow: the app writes one a sound),
+//   the game log itself (--log), matched to the record by time,
+//   the sounds each picture carries (cues: those heard since the picture
+//     before; the run's tail, heard after its last picture, comes with the
+//     next picture, which can be in the next run's folder).
+// The last move's sounds are known only if the log was followed through
+// the Riot after it.
+
+// A log line's time ("2026.10.19-22.05.37:076"), in ms on the log's clock.
+function logMs(at) {
+  const m = /(\d+)\.(\d+)\.(\d+)-(\d+)\.(\d+)\.(\d+):(\d+)/.exec(at || '');
+  return m ? Date.UTC(+m[1], m[2] - 1, +m[3], +m[4], +m[5], +m[6], +m[7]) : null;
+}
+
+// A run's first picture: its objective, or its instrument pick.
+const opens = (e) => e.kind === 'objective' || (e.kind === 'instruments' && e.fresh);
+
+// The pictures after a run's own, up to the next run's first: the sounds of
+// the run's tail. A folder of a picture or two taken after the Riot (no
+// advice in it) is passed through; of one with advice (the next run, or
+// this one's continued after the app restarted), only the first picture.
+function tailOf(file) {
+  const dir = path.dirname(path.resolve(file));
+  const runs = runFolders(path.dirname(dir));
+  const at = runs.indexOf(dir);
+  const out = [];
+  if (at < 0) return out;
+  for (const d of runs.slice(at + 1, at + 4)) {
+    const entries = readRecord(path.join(d, 'record.jsonl'));
+    const advised = entries.some((e) => e.type === 'advice');
+    for (const e of entries) {
+      if (e.type !== 'picture') continue;
+      out.push(e);
+      if (opens(e) || advised) return out;
+    }
+  }
+  return out;
+}
+
+// The game log's events that matter here, from a log and its backups: the
+// Chromatic sounds, the Riot's screen, each run's day 1, on the log's clock.
+const RIOT_LINE = /S16GamePlayCheckOut Run|UI_S16_Riot_Interface/;
+const DAY_ONE_LINE = /\[S16LastDay\] check cur=1 max=/;
+async function readLogs(files) {
+  const out = { files, premium: [], riot: [], day1: [], spans: [] };
+  for (const file of files) {
+    let from = null;
+    let to = null;
+    const rl = readline.createInterface({ input: fs.createReadStream(file, { encoding: 'utf8' }), crlfDelay: Infinity });
+    for await (const line of rl) {
+      if (line.charCodeAt(0) !== 91) continue; // '[': a timed line
+      const t = logMs(line.slice(1, 24));
+      if (t == null) continue;
+      if (from == null) from = t;
+      to = t;
+      if (line.indexOf('S16') < 0) continue;
+      const c = Cues.classify(line);
+      if (c && c.type === 'premium') out.premium.push(t);
+      else if (RIOT_LINE.test(line)) out.riot.push(t);
+      else if (DAY_ONE_LINE.test(line)) out.day1.push(t);
+    }
+    if (from != null) out.spans.push([from, to]);
+  }
+  for (const k of ['premium', 'riot', 'day1']) out[k].sort((a, b) => a - b);
+  // The Riot plays its sound and opens its screen together: one Riot.
+  out.riot = out.riot.filter((t, k, a) => !k || t - a[k - 1] > 2000);
+  return out;
+}
+const logCovers = (log, from, to) => log.spans.some(([a, b]) => a <= from && b >= to);
+
+const median = (list) => {
+  const s = [...list].sort((x, y) => x - y);
+  return s.length ? s[Math.floor(s.length / 2)] : null;
+};
+
+// The record's clock less the log's, not assumed (a log on local time is
+// matched as well): from the Riots both have (the record's riot line comes
+// a moment after the log's), first placed by the pictures' sounds (the log
+// time of a picture's last sound, a second or two before the picture), or,
+// when they place none (a record without them, another log), by the offset
+// that matches the most Riots (one Riot alone only at a time zone's offset,
+// whole quarter hours). With no Riot to check it by, the pictures' alone.
+function logOffset(entries, log) {
+  const near = (t, tol) => log.riot.find((x) => Math.abs(x - t) <= tol);
+  const riots = entries.filter((e) => e.type === 'riot').map((e) => Date.parse(e.at));
+  const fits = (d) => riots.map((r) => {
+    const l = near(r - d, 10000);
+    return l == null ? null : r - l;
+  }).filter((x) => x != null);
+  const guess = median(entries.filter((e) => e.type === 'picture' && e.cues && logMs(e.cues.to) != null).map((e) => Date.parse(e.at) - logMs(e.cues.to)));
+  if (guess != null && fits(guess).length) return median(fits(guess));
+  if (guess != null && !riots.length) return guess;
+  let best = null;
+  for (const r of riots) {
+    for (const l of log.riot) {
+      const d = r - l;
+      const n = fits(d).length;
+      const zone = Math.abs(d - Math.round(d / 900000) * 900000) <= 10000;
+      if ((n > 1 || zone) && (!best || n > best.n)) best = { d, n };
+    }
+  }
+  return best ? median(fits(best.d)) : null;
+}
+
+// The sounds of one run: { source, count, after, through }: the Chromatic
+// sounds heard in the run (null: not all of it was heard), those after its
+// last decision, and whether they were heard through the Riot after it.
+function soundsOf(entries, decisions, tail, log) {
+  const last = decisions[decisions.length - 1];
+  if (!last) return null;
+  const lastAt = Date.parse(last.at);
+  const riot = entries.find((e) => e.type === 'riot' && Date.parse(e.at) > lastAt) || null;
+  const riotAt = riot ? Date.parse(riot.at) : null;
+  // The record's own lines, from the log as it was followed.
+  const lines = entries.filter((e) => e.type === 'log-rainbow');
+  if (lines.length) {
+    return { source: 'written into the record by the app', count: lines.length, after: lines.filter((e) => Date.parse(e.at) > lastAt).length, through: !!riot };
+  }
+  // The game log, matched by time: from the run's day 1 to the Riot after
+  // the last decision.
+  if (log) {
+    const off = logOffset(entries, log);
+    if (off != null) {
+      const from = lastAt - off;
+      const to = riotAt != null ? riotAt - off + 5000 : log.riot.find((t) => t > from && t - from < 30 * 60000);
+      const first = entries.find((e) => e.type === 'picture');
+      const start = first ? [...log.day1].reverse().find((t) => t <= Date.parse(first.at) - off + 60000) : null;
+      if (to != null && logCovers(log, from, to)) {
+        const heard = (a, b) => log.premium.filter((t) => t > a && t <= b).length;
+        const whole = start != null && logCovers(log, start, to) && from - start < 2 * 3600000;
+        return { source: 'read from the log', count: whole ? heard(start - 1, to) : null, after: heard(from, to), through: true, offset: Math.round(off / 1000) };
+      }
+    }
+  }
+  // The pictures' sounds: the run's own (not its opener's, which are the
+  // run before's tail) and those of its tail.
+  // A record from before the pictures carried them has none to go by.
+  const own = entries.filter((e) => e.type === 'picture' && e.cues).filter((e, k) => !(k === 0 && opens(e)));
+  if (!own.length) return null;
+  const all = own.concat(tail.filter((e) => e.cues));
+  const premium = (list) => sum(list.map((e) => e.cues.premium || 0));
+  return {
+    source: 'as the pictures carried them',
+    count: premium(all),
+    after: premium(all.filter((e) => Date.parse(e.at) > lastAt)),
+    through: riotAt != null && all.some((e) => Date.parse(e.at) > riotAt),
+  };
+}
+
 // ---------- The review of one run ----------
 
 function decisionOf(g, boards, treasures) {
@@ -365,16 +529,35 @@ function correctExpect(decisions, treasures) {
   }
 }
 
-function rainbowsOf(entries, treasures, decisions) {
+// The Rainbows vaulted: those confirmed by boards and Treasures, and the
+// last move's, when no board was read after it, settled by the game log's
+// sounds (or by a Warden's Treasure after it, a Rainbow's own window).
+// final is the run's count once nothing is left open.
+function rainbowsOf(entries, treasures, decisions, sounds) {
   const panel = Math.max(0, ...entries.filter((e) => e.type === 'loaded' && e.board).map((e) => (e.board.vault || []).length));
   const last = decisions[decisions.length - 1];
   const riot = entries.some((e) => e.type === 'riot');
+  const confirmed = Math.max(treasures.length, panel, (sounds && sounds.count) || 0);
   let pending = null;
   if (last && !last.played.action && !last.forced) {
     const chance = /(\d+)% to reach Rainbow/.exec(last.advice.why || '');
     pending = { day: last.day, move: last.advice.move, chance: chance ? Number(chance[1]) / 100 : null, expect: last.expect };
+    // What the log heard after it, or the Treasure the game opened for it.
+    // Sounds that missed a Treasure read (a Rainbow each) aren't trusted.
+    const treasure = entries.some((e) => e.type === 'picture' && e.kind === 'treasure' && e.at > last.at);
+    const trusted = !!sounds && sounds.through && (sounds.count == null || sounds.count >= treasures.length);
+    if (trusted) pending.made = sounds.after;
+    else if (treasure) pending.made = 1;
+    if (pending.made != null) {
+      // Rainbows already counted after the decision (a Treasure read, the
+      // sounds' own count) aren't counted again.
+      const before = Math.max(treasures.filter((t) => t.i < last.entry).length, ...entries.filter((e) => e.type === 'loaded' && e.board && e.i < last.entry).map((e) => (e.board.vault || []).length), 0);
+      pending.final = Math.max(confirmed, before + pending.made);
+      pending.by = trusted ? sounds.source : 'a Warden’s Treasure after it';
+    }
   }
-  return { confirmed: Math.max(treasures.length, panel), treasures: treasures.length, panelMax: panel, pending, riot };
+  const final = !pending ? confirmed : pending.final != null ? pending.final : null;
+  return { confirmed, final, treasures: treasures.length, panelMax: panel, sounds, pending, riot };
 }
 
 function causeOf(t, decisions) {
@@ -427,8 +610,8 @@ function expectationOf(decisions, rainbows) {
   return {
     first: first ? { day: first.day, move: first.advice.move, expect: first.expectTotal } : null,
     firstBoard: firstBoard ? { day: firstBoard.day, move: firstBoard.advice.move, expect: firstBoard.expectTotal } : null,
-    final: rainbows.confirmed,
-    pending: rainbows.pending,
+    final: rainbows.final != null ? rainbows.final : rainbows.confirmed,
+    pending: rainbows.final == null ? rainbows.pending : null,
     byDay: Object.values(withExpect.reduce((m, d) => Object.assign(m, { [d.day]: m[d.day] || { day: d.day, expect: d.expectTotal, read: d.expect, vaultKnown: d.vaultKnown } }), {})),
   };
 }
@@ -610,14 +793,16 @@ function pictureOf(entries, id) {
 
 // ---------- One run, put together ----------
 
-function review(file) {
+// log: the game log's events (readLogs), when given.
+function review(file, log) {
   const entries = readRecord(file);
   const boards = boardsOf(entries);
   const treasures = treasuresOf(entries);
   const groups = decisionsOf(entries);
   const decisions = groups.map((g) => decisionOf(g, boards, treasures));
   correctExpect(decisions, treasures);
-  const rainbows = rainbowsOf(entries, treasures, decisions);
+  const sounds = soundsOf(entries, decisions, tailOf(file), log || null);
+  const rainbows = rainbowsOf(entries, treasures, decisions, sounds);
   const lastBoard = boards.length ? boards[boards.length - 1].board : null;
   const session = entries.find((e) => e.type === 'session') || {};
   const out = {
@@ -645,6 +830,8 @@ function review(file) {
 
 // ---------- Pooling runs (--all) ----------
 
+const rainbowTotal = (rb) => (rb.final != null ? rb.final : rb.confirmed);
+
 function pool(reviews) {
   const add = (into, g, k) => {
     into[k] = into[k] || Object.assign({ kind: g.kind, tools: g.tools }, emptyTally());
@@ -669,8 +856,8 @@ function pool(reviews) {
   }
   const s = (f) => sum(reviews.map((r) => r.summary[f] || 0));
   return {
-    runs: reviews.map((r) => ({ run: r.run, objective: r.summary.objective, instruments: r.summary.instruments.map((t) => t.name), rainbows: r.summary.rainbows.confirmed, pending: !!r.summary.rainbows.pending, expectFirst: r.expectation.firstBoard && r.expectation.firstBoard.expect, days: r.summary.days, judged: r.summary.judged, followed: r.summary.followed, cost: r.summary.costTotal })),
-    totals: { decisions: s('decisions'), judged: s('judged'), followed: s('followed'), deviated: s('deviated'), unknown: s('unknown'), closeCalls: s('closeCalls'), rainbows: sum(reviews.map((r) => r.summary.rainbows.confirmed)), cost: round(s('costTotal')) },
+    runs: reviews.map((r) => ({ run: r.run, objective: r.summary.objective, instruments: r.summary.instruments.map((t) => t.name), rainbows: rainbowTotal(r.summary.rainbows), pending: r.summary.rainbows.final == null, expectFirst: r.expectation.firstBoard && r.expectation.firstBoard.expect, days: r.summary.days, judged: r.summary.judged, followed: r.summary.followed, cost: r.summary.costTotal })),
+    totals: { decisions: s('decisions'), judged: s('judged'), followed: s('followed'), deviated: s('deviated'), unknown: s('unknown'), closeCalls: s('closeCalls'), rainbows: sum(reviews.map((r) => rainbowTotal(r.summary.rainbows))), cost: round(s('costTotal')) },
     odds: {
       doors: { groups: Object.values(doors), expectedFor: Object.assign({}, ...reviews.map((r) => r.odds.doors.expectedFor)) },
       replaces: { groups: Object.values(replaces), expectedFor: Object.assign({}, ...reviews.map((r) => r.odds.replaces.expectedFor)) },
@@ -695,7 +882,10 @@ function fmtOpt(o) {
 function summaryBlocks(r) {
   const s = r.summary;
   const rb = s.rainbows;
-  const pending = rb.pending ? ` A last consume was advised on day ${rb.pending.day} (${rb.pending.move}${rb.pending.chance != null ? `, ${Math.round(rb.pending.chance * 100)}% to reach Rainbow` : ''}), but no board was read after it${rb.riot ? ' (the Riot came)' : ''}: the final count is ${rb.confirmed} or ${rb.confirmed + 1}.` : '';
+  const pd = rb.pending;
+  const last = pd ? ` A last move was advised on day ${pd.day} (${pd.move}${pd.chance != null ? `, ${Math.round(pd.chance * 100)}% to reach Rainbow` : ''}), and no board was read after it${rb.riot ? ' (the Riot came)' : ''}` : '';
+  const pending = !pd ? '' : pd.final == null ? `${last}: the final count is ${rb.confirmed} or ${rb.confirmed + 1}${rb.sounds ? ` (the game log’s sounds, ${rb.sounds.source}, don’t reach the Riot)` : ''}.` : `${last}; ${pd.by === 'a Warden’s Treasure after it' ? 'a Warden’s Treasure came after it' : `the game log heard ${pd.made ? `${pd.made} Chromatic sound${pd.made === 1 ? '' : 's'}` : 'no Chromatic sound'} after it, up to the Riot (${pd.by})`}: ${pd.made ? `it made ${pd.made === 1 ? 'a Rainbow' : `${pd.made} Rainbows`}` : 'it made no Rainbow'}, and the final count is **${pd.final}**.`;
+  const heard = rb.sounds && rb.sounds.count != null ? ` The game log heard ${rb.sounds.count} Chromatic sound${rb.sounds.count === 1 ? '' : 's'} in the run (${rb.sounds.source}${rb.sounds.offset != null ? `, matched by time: ${Math.abs(rb.sounds.offset) < 60 ? 'its clock is the record’s' : `its clock ${Math.abs(rb.sounds.offset / 3600).toFixed(1)} h ${rb.sounds.offset > 0 ? 'behind' : 'ahead of'} the record’s`}` : ''}): a Rainbow each.` : '';
   return [
     h(2, 'Run summary'),
     ul([
@@ -703,7 +893,7 @@ function summaryBlocks(r) {
       `Instruments taken: ${s.instruments.map((t) => t.name).join(', ') || 'none read'}.`,
       ...s.picks.map((k) => `Instrument pick, day ${k.day}: offered ${k.offered.join(', ')}; advised ${k.advised}; taken ${k.taken || 'unknown'}.`),
       `Gifts: ${s.gifts}.`,
-      `Rainbows vaulted: **${rb.confirmed}** confirmed (${rb.treasures} Warden’s Treasures; the Chromatic panel, when read, showed up to ${rb.panelMax}).${pending}`,
+      `Rainbows vaulted: **${rb.final != null ? rb.final : rb.confirmed}**${rb.final != null ? '' : ' confirmed'} (${rb.treasures} Warden’s Treasures read; the Chromatic panel, when read, showed up to ${rb.panelMax}).${heard}${pending}`,
       `Days played: ${s.days}${s.reachedDay20 ? ' (the full run)' : ''}${rb.riot ? ', ended by the Riot' : ''}.`,
       `Decisions: ${s.decisions} (${s.forced} with only one move). Of the ${s.judged} whose move could be inferred: **${s.followed} followed the advice, ${s.deviated} didn’t**${s.deviatedToEarlier ? ` (${s.deviatedToEarlier} of these played the advice shown earlier on the same board, before a recheck changed it)` : ''}${s.unsure ? `; ${s.unsure} of the inferences uncertain` : ''}; ${s.unknown} unknown.`,
       `Close calls (the top options within each other’s 95% margin): ${s.closeCalls}. The advice wasn’t the option with the highest mean ${s.notTop} times (the strategy’s pick kept within the margin), ${s.belowTop.toFixed(2)} Rainbows below the top means in all.`,
@@ -794,7 +984,7 @@ function expectationBlocks(r) {
   const x = r.expectation;
   const out = [h(2, 'Expected vs actual')];
   const f = x.firstBoard || x.first;
-  out.push(p(f ? `At the first decision on the board (day ${f.day}, ${f.move}) the advice expected **${f.expect.toFixed(2)}** Rainbows by day 20${x.first && x.first !== f ? ` (at the instrument pick: ${x.first.expect.toFixed(2)})` : ''}. The run vaulted **${x.final}**${x.pending ? ` (+1 if the last consume reached Rainbow)` : ''}.` : 'No expectation recorded.'));
+  out.push(p(f ? `At the first decision on the board (day ${f.day}, ${f.move}) the advice expected **${f.expect.toFixed(2)}** Rainbows by day 20${x.first && x.first !== f ? ` (at the instrument pick: ${x.first.expect.toFixed(2)})` : ''}. The run vaulted **${x.final}**${x.pending ? ` (+1 if the last move made a Rainbow)` : ''}.` : 'No expectation recorded.'));
   if (x.byDay.length) out.push(table(['Day', 'Expected total', 'As advised', 'Vaulted by then'], x.byDay.map((d) => [String(d.day), d.expect.toFixed(2), d.read == null ? '–' : d.read.toFixed(2), String(d.vaultKnown)])));
   out.push(p('“Expected total” is the advice’s expectation with the Rainbows already vaulted (from the Treasures) put back: the reader found the Chromatic panel on few boards, and the analyzer took the vault as empty on the rest.'));
   if (r.treasures.length) out.push(p(`Rainbows: ${r.treasures.map((t, k) => `#${k + 1} day ${t.day}: ${t.cause}`).join('; ')}.`));
@@ -821,7 +1011,7 @@ const LIMITS = [
   'Gifts from the Warden’s Treasure aren’t read or recorded, nor which pick was taken; their effects show up as unexplained board changes.',
   'Event kinds aren’t read (every event is “unknown”), so the events’ shares can’t be compared with the simulator’s.',
   'The vault is read from the Chromatic panel, which the reader rarely finds; Rainbows are counted from the Warden’s Treasures instead.',
-  'The run’s last move (and whether it made a Rainbow) has no board after it when the Riot comes straight after.',
+  'The run’s last move has no board after it when the Riot comes straight after: whether it made a Rainbow is settled by the game log’s Chromatic sounds (written into the record by the app, carried by the pictures, or read from the log with --log), and is left open only without them.',
 ];
 
 const SUGGEST = [
@@ -829,7 +1019,7 @@ const SUGGEST = [
   'Record every option weighed, not just the top 4 (label, mean, margin, playouts), and the strategy’s instant pick separately from the live check’s.',
   'Record the Warden’s Treasure: gifts offered, the gift taken, and the vault count after it.',
   'Record the event kind behind each event door once known, and the outcome (Ratway, Crow Whispers, …).',
-  'Record the run’s end: the final vault count from the Riot screen (or the last board before it), so the result is exact.',
+  'Record the run’s end: the final vault count from the Riot screen, to check the count from the log’s sounds against.',
   'Record the doors offered each morning with the reason a door is missing (the event door, an instrument), and the patrol-walk tile count as read.',
 ];
 
@@ -914,9 +1104,10 @@ ${body}
 // ---------- Command line ----------
 
 function args(argv) {
-  const out = { target: null, out: null, all: false };
+  const out = { target: null, out: null, all: false, logs: [] };
   for (let k = 0; k < argv.length; k++) {
     if (argv[k] === '--out') out.out = argv[++k];
+    else if (argv[k] === '--log') out.logs.push(argv[++k]);
     else if (argv[k] === '--all') out.all = true;
     else if (argv[k] === '--help' || argv[k] === '-h') out.help = true;
     else out.target = argv[k];
@@ -937,32 +1128,31 @@ function write(blocks, data, title, outFile) {
   console.error(`Wrote ${outFile} and ${json}`);
 }
 
-function main() {
+async function main() {
   const a = args(process.argv.slice(2));
   if (a.help) {
-    console.log('node tools/run-review.js [<record folder or record.jsonl>] [--out file.md|file.html] [--all]');
+    console.log('node tools/run-review.js [<record folder or record.jsonl>] [--out file.md|file.html] [--all] [--log UE_game.log]...');
     return;
   }
+  const log = a.logs.length ? await readLogs(a.logs) : null;
   if (a.all) {
     const dir = a.target || recordsDir();
     // Folders with no advice (a run that never got going) are left out.
-    const reviews = runFolders(dir).map((d) => review(path.join(d, 'record.jsonl'))).filter((r) => r.decisions.length);
+    const reviews = runFolders(dir).map((d) => review(path.join(d, 'record.jsonl'), log)).filter((r) => r.decisions.length);
     if (!reviews.length) throw new Error(`No runs with advice under ${dir}`);
     const pooled = pool(reviews);
     write(poolBlocks(pooled), { pooled, runs: reviews }, `Tartarus runs pooled (${reviews.length})`, a.out);
     return;
   }
-  const r = review(recordFile(a.target));
+  const r = review(recordFile(a.target), log);
   write(runBlocks(r), r, `Run review ${r.run}`, a.out);
 }
 
 if (require.main === module) {
-  try {
-    main();
-  } catch (e) {
+  main().catch((e) => {
     console.error(e.message);
     process.exit(1);
-  }
+  });
 }
 
-module.exports = { review, pool, parseAction, parseValue };
+module.exports = { review, pool, parseAction, parseValue, readLogs };
