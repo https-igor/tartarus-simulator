@@ -2899,6 +2899,33 @@
       }
       m.cells[n].beast = best.beast;
     });
+    // A badge that looks like more than one card's (Tyranny's and Cage
+    // Fight's: the user's Cage Fight run read as Tyranny on every board)
+    // is told by the jaws: Cage Fight lets an inmate eat the beasts it
+    // counters at a lower rarity, and the game marks it. The card is set
+    // only when every inmate the cards disagree on fits one of them, else
+    // the player is asked.
+    const alike = r.badge && !r.badge.id && (r.badge.alike || []).filter((id) => T.START_EVENTS && T.START_EVENTS[id]);
+    if (alike && alike.length > 1 && (!m.startEvent || m.startEvent === 'none')) {
+      const known = r.cells.map((c, n) => n).filter((n) => r.cells[n].kind === 'inmate' && m.cells[n].kind === 'inmate' && r.cells[n].jaws !== null);
+      const states = alike.map((id) => buildState(Object.assign({}, m, { step: 'manage', startEvent: id })).st);
+      const fitting = new Set();
+      let split = false;
+      for (const n of known) {
+        const fit = alike.filter((id, k) => hasTarget(states[k], n) === !!r.cells[n].jaws);
+        // Fitting every card tells nothing; fitting none is a misread cell.
+        if (fit.length === alike.length || !fit.length) continue;
+        if (fit.length !== 1) split = true;
+        fit.forEach((id) => fitting.add(id));
+      }
+      const names = alike.map((id) => T.START_EVENTS[id].name);
+      if (!split && fitting.size === 1) {
+        m.startEvent = [...fitting][0];
+        notes.push(`Start of run: ${T.START_EVENTS[m.startEvent].name}, from its badge under the instruments (it looks like ${names.filter((x) => x !== T.START_EVENTS[m.startEvent].name).join(' or ')}’s) and the inmates’ jaws.`);
+      } else {
+        notes.push(`The start card’s badge under the instruments looks like ${names.join(' or ')}: set it under Start of run.`);
+      }
+    }
     const { st: final } = buildState(Object.assign({}, m, { step: 'manage' }));
     const oddCells = [];
     r.cells.forEach((c, n) => {
