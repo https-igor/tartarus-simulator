@@ -623,6 +623,10 @@ function review(file) {
   const out = {
     run: path.basename(path.dirname(path.resolve(file))),
     file: path.resolve(file),
+    // The app keeps the pictures of its last few runs only: an older run's
+    // pictures/ folder is gone, and the names below point at nothing. The
+    // review never opens a picture, so it reads the same either way.
+    picturesKept: fs.existsSync(path.join(path.dirname(path.resolve(file)), 'pictures')),
     session: { at: session.at || null, version: session.version || null, site: session.site || null },
     summary: summaryOf(entries, decisions, treasures, rainbows, lastBoard),
     decisions,
@@ -832,7 +836,7 @@ const SUGGEST = [
 function runBlocks(r) {
   return [
     h(1, `Tartarus run review: ${r.run}`),
-    p(`Record: ${r.file}. App ${r.session.version || '?'}, site ${r.session.site || '?'}, started ${r.session.at || '?'}. The objective of a run is to vault as many Rainbows as possible.`),
+    p(`Record: ${r.file}. App ${r.session.version || '?'}, site ${r.session.site || '?'}, started ${r.session.at || '?'}.${r.picturesKept ? '' : ' Its pictures weren’t kept (the app keeps those of its last runs only): picture names are for reference.'} The objective of a run is to vault as many Rainbows as possible.`),
     ...summaryBlocks(r),
     ...expectationBlocks(r),
     ...decisionBlocks(r),

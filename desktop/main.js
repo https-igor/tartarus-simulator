@@ -98,7 +98,9 @@ const settings = Object.assign({
   gameFirst: true, // the site pages run below normal priority, so the game comes first
   record: true, // keep a record of each board and advice, for testing
   recordLimitMB: 1024, // debug build (--dev): the record's room on disk, pictures included
-  recordRuns: 5, // normal build: the runs the record keeps
+  recordKeepRuns: 200, // the runs the record keeps (their record.jsonl)
+  recordTextMB: 100, // and at most this much of record.jsonl in all
+  recordPictureRuns: 10, // normal build: the runs that keep their pictures too
   consent: null, // { version, at }: the player agreed on follow.html in the app, to that version
   // When Windows won't share the game window: the player's answer in the
   // overlay to sharing the screen it's on instead ({ on, at }), null until
@@ -109,6 +111,7 @@ const settings = Object.assign({
 }, readJson(SETTINGS_FILE));
 delete settings.onlyWithGame; // 0.1.1 hid the overlay behind other windows by default
 delete settings.locked; // before 0.2.5 the overlay could be locked (clicks went through)
+delete settings.recordRuns; // before 0.2.19 the record kept 5 runs, pictures and all (saved in every settings.json)
 // Before 0.1.7 the overlay's "–" hid it for good, and that was kept; now it
 // folds the card. Anyone it hid gets the overlay back once.
 if (!(settings.v >= 2)) {
@@ -594,16 +597,23 @@ const hwndOf = (win) => {
 // the board it advised on and the advice, and the player's fixes and
 // commands, one run a folder (record.jsonl and pictures/), kept on this PC.
 // The review window (lib/review.html) steps through them. The debug build
-// (--dev, the maintainer's own) keeps runs up to settings.recordLimitMB
-// (1 GB) in all; the normal build keeps the last settings.recordRuns (5).
-// The oldest go first, never the one being written.
+// (--dev, the maintainer's own) keeps runs, pictures and all, up to
+// settings.recordLimitMB (1 GB) in all; over it, the oldest runs' pictures
+// go first, and their record.jsonl stays. The normal build keeps the
+// pictures of the last settings.recordPictureRuns (10) runs only: older
+// runs keep their record.jsonl (a few hundred KB, what the review and
+// tools/run-review.js read) without pictures/. Both keep at most
+// settings.recordKeepRuns (200) runs and settings.recordTextMB (100 MB) of
+// record.jsonl. The oldest go first, never the one being written.
 const RECORDS = path.join(app.getPath('userData'), 'records');
 const SESSION_NAME = /^\d{4}-\d\d-\d\dT[\d-]+$/;
 let recording = null; // { name, dir, file, pictures }
 const pictureFiles = new Map(); // picture id -> the file its entry named, until it's written
 let recordBytes = 0; // all sessions, roughly
 const recordLimit = () => Math.max(1, Number(settings.recordLimitMB) || 1024) * 1024 * 1024;
-const keepRuns = () => Math.max(1, Number(settings.recordRuns) || 5);
+const keepRuns = () => Math.max(1, Number(settings.recordKeepRuns) || 200);
+const textLimit = () => Math.max(1, Number(settings.recordTextMB) || 100) * 1024 * 1024;
+const pictureRuns = () => Math.max(1, Number(settings.recordPictureRuns) || 10);
 function dirSize(dir) {
   let total = 0;
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -612,21 +622,50 @@ function dirSize(dir) {
   }
   return total;
 }
-// Over the limit, the oldest runs go, never the one being written.
+// Over a limit, the oldest runs lose their pictures, or go, never the one
+// being written. A run's pictures/ folder gone is how the review knows its
+// pictures were let go (a run with none taken has an empty one).
 function pruneRecords() {
   try {
-    const sizes = fs.readdirSync(RECORDS).filter((d) => SESSION_NAME.test(d)).sort().map((d) => ({ d, size: dirSize(path.join(RECORDS, d)) }));
-    let total = sizes.reduce((sum, s) => sum + s.size, 0);
-    let left = sizes.length;
-    for (const s of sizes) {
-      if (BIG_RECORD ? total <= recordLimit() : left <= keepRuns()) break;
-      if (recording && s.d === recording.name) continue;
-      fs.rmSync(path.join(RECORDS, s.d), { recursive: true, force: true });
-      total -= s.size;
+    const runs = fs.readdirSync(RECORDS).filter((d) => SESSION_NAME.test(d)).sort().map((d) => {
+      const dir = path.join(RECORDS, d);
+      const pics = path.join(dir, 'pictures');
+      const size = statOf(pics) ? dirSize(pics) : 0; // the pictures
+      return { d, dir, pics, size, text: dirSize(dir) - size }; // text: record.jsonl
+    });
+    const current = (r) => recording && r.d === recording.name;
+    const dropPictures = (r) => {
+      if (!statOf(r.pics)) return;
+      fs.rmSync(r.pics, { recursive: true, force: true });
+      r.size = 0;
+      note('record: removed the pictures of the old run', r.d);
+    };
+    // Whole runs: past the run count or the record.jsonl room.
+    let text = runs.reduce((sum, r) => sum + r.text, 0);
+    let left = runs.length;
+    for (const r of [...runs]) {
+      if (left <= keepRuns() && text <= textLimit()) break;
+      if (current(r)) continue;
+      fs.rmSync(r.dir, { recursive: true, force: true });
+      runs.splice(runs.indexOf(r), 1);
+      text -= r.text;
       left -= 1;
-      note('record: removed the old run', s.d);
+      note('record: removed the old run', r.d);
     }
-    recordBytes = total;
+    if (BIG_RECORD) {
+      // Pictures, oldest first, until all fits in recordLimitMB.
+      let total = text + runs.reduce((sum, r) => sum + r.size, 0);
+      for (const r of runs) {
+        if (total <= recordLimit()) break;
+        if (current(r) || !r.size) continue;
+        total -= r.size;
+        dropPictures(r);
+      }
+    } else {
+      // Pictures of the newest few runs only.
+      runs.slice(0, Math.max(0, runs.length - pictureRuns())).forEach((r) => current(r) || dropPictures(r));
+    }
+    recordBytes = runs.reduce((sum, r) => sum + r.text + r.size, 0);
   } catch (e) {
     // No records yet.
   }
@@ -690,12 +729,23 @@ const recordEvent = (entry) => recording && addRecord(entry);
 
 // #endregion
 const readLines = (file) => (statOf(file) ? fs.readFileSync(file, 'utf8') : '').split('\n').filter(Boolean);
+// Up to 200 runs of a few hundred KB each: a run's counts are kept until
+// its record.jsonl changes, so the list doesn't read them all every time.
+const sessionCounts = new Map(); // name -> { key, counts }
 function listSessions() {
   try {
     return fs.readdirSync(RECORDS).filter((d) => SESSION_NAME.test(d)).sort().reverse().map((name) => {
-      const types = readLines(path.join(RECORDS, name, 'record.jsonl')).map((l) => (/"type":"([\w-]+)"/.exec(l) || [])[1]);
-      const count = (t) => types.filter((x) => x === t).length;
-      return { name, pictures: count('picture'), advice: count('advice'), edits: count('edit') };
+      const file = path.join(RECORDS, name, 'record.jsonl');
+      const st = statOf(file);
+      const key = st ? `${st.size}|${st.mtimeMs}` : '';
+      let known = sessionCounts.get(name);
+      if (!known || known.key !== key) {
+        const types = readLines(file).map((l) => (/"type":"([\w-]+)"/.exec(l) || [])[1]);
+        const count = (t) => types.filter((x) => x === t).length;
+        known = { key, counts: { pictures: count('picture'), advice: count('advice'), edits: count('edit') } };
+        sessionCounts.set(name, known);
+      }
+      return Object.assign({ name, picturesGone: !statOf(path.join(RECORDS, name, 'pictures')) }, known.counts);
     });
   } catch (e) {
     return [];
@@ -713,7 +763,8 @@ function loadSession(name) {
       return null;
     }
   }).filter(Boolean);
-  return { name, base: `${require('url').pathToFileURL(dir).href}/`, entries };
+  // picturesGone: an older run's pictures were let go (pruneRecords).
+  return { name, base: `${require('url').pathToFileURL(dir).href}/`, entries, picturesGone: !statOf(path.join(dir, 'pictures')) };
 }
 
 function showReview() {
@@ -1641,6 +1692,152 @@ async function debugReport() {
   send('analyzer', 'debug-report', { name: `Desktop debug report ${app.getVersion()}`, text: text.slice(0, 2000), outcome: 'Pictures don’t come, or something else isn’t working. (Say what you saw.)' });
 }
 
+// #region export-logs
+// Tray: Export logs. One zip for the player to send when something went
+// wrong, on the Desktop (else Downloads, else home):
+// tartarus-logs-<user>-<date>.zip, with the app's own logs/, records/ and
+// settings.json from its user data folder (never Chromium's caches and
+// storage beside them), and the game's log with its backups of the last 2
+// days (UE_game*.log in the log's folder). Game logs run to 300-450 MB a
+// file: lib/zip.js streams them through zlib, which deflates on Node's
+// worker threads, so the app keeps running while it zips (the time the
+// main process was held up the longest is in the debug log). A game log
+// still being written goes in as it was when its turn came.
+const EXPORT_DAYS = 2;
+let exporting = false;
+async function filesUnder(dir, base) {
+  const out = [];
+  let list = [];
+  try {
+    list = await fs.promises.readdir(dir, { withFileTypes: true });
+  } catch (e) {
+    return out; // Not there.
+  }
+  for (const e of list) {
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) out.push(...await filesUnder(p, `${base}/${e.name}`));
+    else if (e.isFile()) out.push({ name: `${base}/${e.name}`, file: p });
+  }
+  return out;
+}
+function exportFolder() {
+  for (const where of ['desktop', 'downloads', 'home']) {
+    try {
+      const dir = app.getPath(where);
+      if (statOf(dir) && statOf(dir).isDirectory()) return dir;
+    } catch (e) {
+      // No such folder on this system.
+    }
+  }
+  return app.getPath('temp');
+}
+async function exportLogs(toDir) {
+  if (exporting) return null;
+  exporting = true;
+  rebuildMenu();
+  const os = require('os');
+  let user = 'user';
+  try {
+    user = os.userInfo().username || user;
+  } catch (e) {
+    user = process.env.USERNAME || process.env.USER || user;
+  }
+  const d = new Date();
+  const day = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const dir = toDir ? path.resolve(toDir) : exportFolder();
+  const file = path.join(dir, `tartarus-logs-${user.replace(/[^\w.-]+/g, '_')}-${day}.zip`);
+  const part = `${file}.part`;
+  // The longest the main process was held up while zipping: it should stay
+  // well under a frame or two.
+  let lastTick = Date.now();
+  let stall = 0;
+  const watch = setInterval(() => {
+    stall = Math.max(stall, Date.now() - lastTick - 100);
+    lastTick = Date.now();
+  }, 100);
+  const started = Date.now();
+  const { ZipWriter } = require('./lib/zip.js');
+  let zip = null;
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    const userData = app.getPath('userData');
+    const files = [
+      ...await filesUnder(path.join(userData, 'logs'), 'app/logs'),
+      ...await filesUnder(RECORDS, 'app/records'),
+      { name: 'app/settings.json', file: SETTINGS_FILE },
+    ];
+    // The game's log, and its backups (UE_game-backup-<date>.log) and other
+    // UE_game*.log of the last 2 days, newest first.
+    const gameLogs = [];
+    if (logPath) {
+      const since = Date.now() - EXPORT_DAYS * 24 * 3600 * 1000;
+      let names = [];
+      try {
+        names = await fs.promises.readdir(path.dirname(logPath));
+      } catch (e) {
+        // No game log folder (the game never ran here).
+      }
+      for (const n of names) {
+        const p = path.join(path.dirname(logPath), n);
+        const st = statOf(p);
+        const own = path.resolve(p).toLowerCase() === path.resolve(logPath).toLowerCase();
+        if (st && st.isFile() && /^UE_game.*\.log$/i.test(n) && (own || st.mtimeMs >= since)) gameLogs.push({ name: `game-logs/${n}`, file: p, at: st.mtimeMs });
+      }
+      gameLogs.sort((a, b) => b.at - a.at);
+    }
+    files.push(...gameLogs);
+    zip = new ZipWriter(part);
+    const lines = [];
+    let size = 0;
+    for (const f of files) {
+      let r;
+      try {
+        r = await zip.addFile(f.name, f.file);
+      } catch (e) {
+        // A file gone or locked since the list was made: the rest still go.
+        if (zip.failed) throw zip.failed;
+        r = { skipped: String((e && e.code) || e) };
+      }
+      if (r.skipped) lines.push(`left out: ${f.name} (${r.skipped})`);
+      else {
+        size += r.size;
+        if (f.name.startsWith('game-logs/')) {
+          lines.push(`${f.name}: ${r.size} bytes`);
+          note(`export: ${f.name}, ${Math.round(r.size / 1048576)} MB`);
+        }
+      }
+    }
+    const home = os.homedir();
+    await zip.addBuffer('about.txt', [
+      `Tartarus Overlay ${app.getVersion()}${BIG_RECORD ? ' (debug)' : ''} on ${process.platform} ${os.release()}, exported ${d.toISOString()}`,
+      `Game log (${logFoundBy}): ${logPath ? logPath.split(home).join('~') : 'not found'}`,
+      `${files.length} files, ${size} bytes before zipping.`,
+      ...lines,
+      '',
+    ].join('\n'));
+    const bytes = await zip.finish();
+    fs.renameSync(part, file);
+    const mb = (bytes / 1048576).toFixed(1);
+    note(`export: ${file}, ${mb} MB (${files.length} files, ${Math.round(size / 1048576)} MB unzipped) in ${((Date.now() - started) / 1000).toFixed(1)} s; longest hold-up ${stall} ms`);
+    if (!TEST) {
+      shell.showItemInFolder(file);
+      dialog.showMessageBox({ type: 'info', title: 'Tartarus Overlay', message: 'The logs are exported.', detail: `${file}\n${mb} MB\n\nSend this file to whoever asked for it. It has the app’s logs and record and the game’s log of the last ${EXPORT_DAYS} days (nothing else from this PC).` }).catch(() => {});
+    }
+    return file;
+  } catch (e) {
+    if (zip) zip.abort();
+    fs.rm(part, { force: true }, () => {});
+    note('export failed:', String((e && e.stack) || e));
+    if (!TEST) dialog.showMessageBox({ type: 'error', title: 'Tartarus Overlay', message: 'The logs couldn’t be exported.', detail: String((e && e.message) || e) }).catch(() => {});
+    return null;
+  } finally {
+    clearInterval(watch);
+    exporting = false;
+    rebuildMenu();
+  }
+}
+// #endregion
+
 ipcMain.on('site:advice', (e, data) => {
   if (!fromPage(e, 'analyzer') || !data || !small(data)) return;
   const was = lastAdvice || {};
@@ -1969,9 +2166,10 @@ function rebuildMenu() {
     { label: siteUpdate ? 'Reload the site (an update is ready)' : 'Reload the site', click: () => reloadSite() },
     appUpdate ? { label: `Restart to update the app (${appUpdate})`, click: () => command('restart') } : { label: `Version ${app.getVersion()}${DEV ? ' (debug)' : ''}`, enabled: false },
     { label: 'Record every board and advice (testing)', type: 'checkbox', checked: settings.record, click: (i) => { settings.record = i.checked; saveSettings(); } },
-    { label: `Review the record… (${BIG_RECORD ? `${Math.round(recordBytes / 1048576)} MB of ${Math.round(recordLimit() / 1048576)} MB` : `the last ${keepRuns()} runs`})`, click: () => showReview() },
+    { label: `Review the record… (${BIG_RECORD ? `${Math.round(recordBytes / 1048576)} MB of ${Math.round(recordLimit() / 1048576)} MB` : `pictures of the last ${pictureRuns()} runs`})`, click: () => showReview() },
     { label: 'Send a debug report…', click: () => debugReport() },
     { label: 'Open the debug log', click: () => shell.openPath(LOG_FILE) },
+    { label: exporting ? 'Exporting the logs…' : 'Export logs (a zip on the Desktop)', enabled: !exporting, click: () => exportLogs() },
     ...(DEV ? [{
       label: 'Developer tools',
       submenu: [['follow', 'Auto Screenshot Mode page'], ['analyzer', 'Board analyzer'], ['overlay', 'Overlay'], ['marks', 'Marks over the game']].map(([name, label]) => ({
@@ -2060,6 +2258,10 @@ if (!app.requestSingleInstanceLock()) {
       // "cpu one": as the tray's Processor use does.
       const cpu = /cpu (\w+)/.exec(text);
       if (cpu) setCpu(cpu[1]);
+      // "export" / "export <folder>": as the tray's Export logs, the zip in
+      // that folder (not the Desktop) when one is given.
+      const exp = /^export(?:[ \t]+(\S.*?))?[ \t]*$/m.exec(text);
+      if (exp) exportLogs(exp[1] || null).then((f) => console.log(`[overlay] exported ${f || 'nothing (failed)'}`));
       // "pause" / "resume": as the overlay's Stop and Start do.
       if (/^pause\s*$/m.test(text)) setPaused(true);
       if (/^resume\s*$/m.test(text)) setPaused(false);
