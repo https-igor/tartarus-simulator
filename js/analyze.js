@@ -2609,7 +2609,12 @@
   function runTools(read, base, m, notes, sims) {
     const sameRun = !(m.day < base.day);
     const known = sameRun ? (base.tools || []).filter((id) => T.TOOLS[id]) : [];
-    const offer = sameRun && base.step === 'choice' && base.choice && base.choice.kind === 'tool' ? base.choice.options.filter((id) => T.TOOLS[id]) : [];
+    const onOffer = sameRun && base.step === 'choice' && base.choice && base.choice.kind === 'tool';
+    // An offer the panel didn't show taken yet (a Treasure came between, or
+    // the icon was still flying in) waits for it a couple of days.
+    const waiting = !onOffer && sameRun && base.toolOffer && m.day - base.toolOffer.day <= 2 ? base.toolOffer : null;
+    const offer = onOffer ? base.choice.options.filter((id) => T.TOOLS[id]) : waiting ? waiting.options : [];
+    m.toolOffer = null;
     const out = known.map((id) => ({ id, sim: id, name: T.toolName(id), conf: 1, kept: true }));
     const has = (id) => out.some((t) => t.sim === id);
     const slots = read.length;
@@ -2628,6 +2633,15 @@
       m.toolsSeen = 0;
     }
     if (sameRun && (known.length || offer.length || base.runStart || base.toolsLocked)) {
+      // The advice given on that offer: the board before is the offer, so
+      // the analyzer's current recommendation is for it.
+      const advised = () => {
+        const rec = onOffer && base === model && fresh() ? recommendation() : null;
+        return rec && rec.action && rec.action.type === 'choose' && offer.includes(rec.action.id) ? rec.action.id : waiting ? waiting.advised : null;
+      };
+      if (offer.length && slots <= known.length && !offer.some(has)) {
+        m.toolOffer = { options: offer, advised: advised(), day: waiting ? waiting.day : base.day };
+      }
       if (offer.length && slots > known.length && !offer.some(has)) {
         const seen = read.filter((t) => offer.includes(t.sim)).sort((a, b) => b.conf - a.conf)[0];
         // An icon read as an instrument that wasn't offered can still be one
@@ -2641,11 +2655,7 @@
             if (a && (!alike || a.score > alike.score)) alike = { sim: a.sim, score: a.score, as: t.sim };
           }
         }
-        // The advice given on that offer: the board before is the offer, so
-        // the analyzer's current recommendation is for it.
-        const rec = base === model && fresh() ? recommendation() : null;
-        const advised = rec && rec.action && rec.action.type === 'choose' && offer.includes(rec.action.id) ? rec.action.id : null;
-        const take = seen ? seen.sim : alike ? alike.sim : advised;
+        const take = seen ? seen.sim : alike ? alike.sim : advised();
         if (take) {
           out.push({ id: take, sim: take, name: T.toolName(take), conf: 1, kept: true });
           if (!seen && alike) notes.push(`An icon read as ${alike.as ? T.toolName(alike.as) : 'another instrument'}, which wasn't offered: taken as ${T.toolName(take)}, the closest of the offer. If you took another, change it under Torture Instrument.`);
