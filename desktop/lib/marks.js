@@ -2,8 +2,10 @@
  * picture's pixels (the picture is the game window's content), scaled here
  * to the window: rings and boxes around what to click (go, green), the cell
  * it acts on (target, gold) and what to check (hint, pulsing cyan), arrows,
- * labels, and the title in a pill at the top. Text is set as text, never as
- * markup. Cleared after CLEAR_MS without a new payload. */
+ * labels, and the title in a pill at the top. A likely payload (the move
+ * isn't final: the live check still runs, or the gift is provisional) is
+ * drawn faint, thin and dashed, solid once the final move comes. Text is
+ * set as text, never as markup. Cleared after CLEAR_MS without a new payload. */
 (function () {
   'use strict';
 
@@ -22,10 +24,11 @@
   const tone = (t) => (t === 'target' || t === 'hint' ? t : 'go');
   const r1 = (v) => Math.round(v * 10) / 10;
 
-  // The same shape twice: a wide dark edge under the colored line.
-  function stroked(group, tag, attrs, t, width) {
-    group.append(s(tag, Object.assign({ class: 'edge', 'stroke-width': width + 5 }, attrs)));
-    group.append(s(tag, Object.assign({ class: `line is-${t}`, 'stroke-width': width }, attrs)));
+  // The same shape twice: a wide dark edge under the colored line. dash:
+  // a stroke-dasharray for both, or none.
+  function stroked(group, tag, attrs, t, width, dash) {
+    group.append(s(tag, Object.assign({ class: 'edge', 'stroke-width': width + 5, 'stroke-dasharray': dash }, attrs)));
+    group.append(s(tag, Object.assign({ class: `line is-${t}`, 'stroke-width': width, 'stroke-dasharray': dash }, attrs)));
   }
 
   function draw() {
@@ -40,8 +43,13 @@
     const H = window.innerHeight;
     const sx = W / payload.width;
     const sy = H / payload.height;
-    const width = Math.max(3, Math.min(8, H / 200)); // the line, about 6 px on a 1300 px window
-    const pad = Math.max(4, width * 1.4);
+    // Not final yet: thinner, dashed and faint (.is-likely), so a fast
+    // player doesn't take it for the checked move.
+    const likely = payload.likely === true;
+    const full = Math.max(3, Math.min(8, H / 200)); // the line, about 6 px on a 1300 px window
+    const width = likely ? Math.max(2, full * 0.6) : full;
+    const dash = likely ? `${r1(width * 3)} ${r1(width * 2.2)}` : null;
+    const pad = Math.max(4, full * 1.4);
     const fontPx = Math.round(Math.max(13, Math.min(26, H / 60)));
     document.documentElement.style.setProperty('--label-size', `${fontPx}px`);
     document.documentElement.style.setProperty('--title-size', `${Math.round(fontPx * 1.2)}px`);
@@ -65,8 +73,8 @@
       const head = width * 4;
       const bx = x2 - ux * head;
       const by = y2 - uy * head;
-      const g = s('g');
-      stroked(g, 'line', { x1: r1(x1), y1: r1(y1), x2: r1(bx), y2: r1(by) }, 'go', width);
+      const g = s('g', { class: likely ? 'is-likely' : null });
+      stroked(g, 'line', { x1: r1(x1), y1: r1(y1), x2: r1(bx), y2: r1(by) }, 'go', width, dash);
       const tip = [[x2, y2], [bx - uy * head * 0.6, by + ux * head * 0.6], [bx + uy * head * 0.6, by - ux * head * 0.6]].map((p) => p.map(r1).join(',')).join(' ');
       g.append(s('polygon', { class: 'edge', points: tip, 'stroke-width': 5 }));
       g.append(s('polygon', { class: 'head is-go', points: tip }));
@@ -79,32 +87,36 @@
       const y = m.y * sy;
       const w = m.w * sx;
       const h = m.h * sy;
-      const g = s('g', { class: t === 'hint' ? 'pulse' : null });
+      // A hint (View Prison Status on a provisional gift) is the step to
+      // take now, so it keeps its own pulse, solid.
+      const faint = likely && t !== 'hint';
+      const g = s('g', { class: t === 'hint' ? 'pulse' : faint ? 'is-likely' : null });
       let bottom;
       let top;
       if (m.shape === 'box') {
         const attrs = { x: r1(x - pad), y: r1(y - pad), width: r1(w + 2 * pad), height: r1(h + 2 * pad), rx: r1(Math.min(14, (w + h) / 10)) };
-        stroked(g, 'rect', attrs, t, width);
+        stroked(g, 'rect', attrs, t, faint ? width : full, faint ? dash : null);
         top = y - pad;
         bottom = y + h + pad;
       } else {
         // An ellipse around the rect: through its corners, plus a little.
         const rx = (w / 2) * 1.2 + pad;
         const ry = (h / 2) * 1.2 + pad;
-        stroked(g, 'ellipse', { cx: r1(x + w / 2), cy: r1(y + h / 2), rx: r1(rx), ry: r1(ry) }, t, width);
+        stroked(g, 'ellipse', { cx: r1(x + w / 2), cy: r1(y + h / 2), rx: r1(rx), ry: r1(ry) }, t, faint ? width : full, faint ? dash : null);
         top = y + h / 2 - ry;
         bottom = y + h / 2 + ry;
       }
       svg.append(g);
       if (m.label) {
         const below = bottom + fontPx + 8 < H;
-        const label = s('text', { class: `label is-${t}`, x: r1(x + w / 2), y: r1(below ? bottom + fontPx + 4 : top - 8), 'text-anchor': 'middle' });
+        const label = s('text', { class: `label is-${t}${faint ? ' is-likely' : ''}`, x: r1(x + w / 2), y: r1(below ? bottom + fontPx + 4 : top - 8), 'text-anchor': 'middle' });
         label.textContent = m.label;
         svg.append(label);
       }
     }
 
-    title.textContent = payload.title || '';
+    title.textContent = payload.title ? `${payload.title}${likely ? ' …' : ''}` : '';
+    title.classList.toggle('is-likely', likely);
     title.hidden = !payload.title;
   }
 

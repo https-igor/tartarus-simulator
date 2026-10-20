@@ -68,6 +68,19 @@
     50% { opacity: 0.45; transform: scale(1.12); }
   }
 
+  /* "Likely, still checking": the move isn't final, so it's faint and
+   * dashed (marks.js thins the line) and flickers softly. It goes solid
+   * when the live check gives the final move. */
+  .is-likely {
+    opacity: 0.45;
+    animation: likely 1.6s ease-in-out infinite;
+  }
+
+  @keyframes likely {
+    0%, 100% { opacity: 0.45; }
+    50% { opacity: 0.28; }
+  }
+
   .label {
     font: 700 var(--label-size, 18px)/1 var(--font-body);
     paint-order: stroke;
@@ -97,6 +110,11 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+
+  .title.is-likely {
+    border-style: dashed;
+    color: color-mix(in srgb, var(--chalk) 75%, transparent);
   }
 
   .title[hidden] {

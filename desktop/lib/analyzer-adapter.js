@@ -228,7 +228,8 @@
   let advised = ''; // the advice last put in the record, with its board
   // The marks over the game window (TartarusAnalyzer.marks()): the advice
   // on the latest picture, null once it clears or goes stale. Sent when
-  // they change.
+  // they change: the likely pick's marks carry likely: true (drawn faint
+  // and dashed), so the checked move, even the same one, is sent again.
   let lastMarks = '';
   // After a click in the game, the marks wait for the next picture: until
   // it's read, the advice is still the last screen's, and sending it again

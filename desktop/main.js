@@ -1139,7 +1139,8 @@ function cleanMarks(p) {
   const xs = (v) => num(v, -width, 2 * width);
   const ys = (v) => num(v, -height, 2 * height);
   const list = (v, n) => (Array.isArray(v) ? v.slice(0, n) : []);
-  const out = { id: num(p.id, -1e15, 1e15) || 0, width, height, title: text(p.title, 80), marks: [], arrows: [] };
+  // likely: the move isn't final yet (the page draws it faint and dashed).
+  const out = { id: num(p.id, -1e15, 1e15) || 0, width, height, title: text(p.title, 80), likely: p.likely === true, marks: [], arrows: [] };
   for (const m of list(p.marks, 24)) {
     if (!m || typeof m !== 'object') continue;
     const r = { shape: m.shape === 'box' ? 'box' : 'ring', x: xs(m.x), y: ys(m.y), w: num(m.w, 0, width), h: num(m.h, 0, height), tone: MARKS_TONES.has(m.tone) ? m.tone : 'go' };

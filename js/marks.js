@@ -27,7 +27,10 @@
   // null. model: the analyzer's board ({ warden, choice }). opts: { id,
   // width, height, provisional } (provisional: a gift advised on the board
   // before the Treasure, not seen behind it yet). The payload, or null when
-  // nothing of the advice shows in the picture.
+  // nothing of the advice shows in the picture. Its likely: the move isn't
+  // final yet (the strategy's pick while the live check runs, advice.likely,
+  // or a provisional gift), so the marks window draws it faint and dashed:
+  // a fast player who clicks it may see the check switch the move after.
   function fromAdvice(advice, geometry, layout, model, opts) {
     const o = opts || {};
     const a = advice && advice.action;
@@ -108,6 +111,7 @@
       width: o.width || size.width,
       height: o.height || size.height,
       title: String(advice.label || '').slice(0, 80),
+      likely: !!(advice.likely || o.provisional),
       marks,
       arrows: arrows.filter(Boolean),
     };
