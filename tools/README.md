@@ -615,6 +615,8 @@ node tools/scan-test.js            # scores the reader against the labels
 node tools/scan-test.js --quick    # the screenshots as captured only
 ```
 
+`scan-test.js` first checks the small pieces of live pictures in `tools/fixtures/` (start card badges, Chromatic panels), which are in the repo, so it runs without `trainingdata/` too.
+
 ## Accuracy (2026-10-13)
 
 Five labeled board screenshots, also resized to stand in for other resolutions and UI scales, and cropped to the board:

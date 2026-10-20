@@ -1583,12 +1583,37 @@
     // user's runs; on the whole badge 0.979-0.99, report 174): a card
     // without a sample stays unknown.
     const feat = artFeature(img, ...badgeBox(label, true));
-    let best = null;
-    for (const b of ref.badges || []) {
-      const score = similarity(feat, b.feat);
-      if (!best || score > best.score) best = { id: b.id, score };
+    // Each card's best score over its samples.
+    const byId = {};
+    for (const b of ref.badges || []) byId[b.id] = Math.max(byId[b.id] || 0, similarity(feat, b.feat));
+    const ranked = Object.keys(byId).sort((a, b) => byId[b] - byId[a]);
+    const best = ranked.length ? { id: ranked[0], score: byId[ranked[0]] } : null;
+    const score = best ? Math.round(best.score * 1000) / 1000 : 0;
+    if (!best || best.score <= 0.95) return { id: null, score, box };
+    // Cards whose badges look alike can't be told apart by it: Tyranny's
+    // and Cage Fight's (a scroll with beasts) score 0.994 against each
+    // other, and the user's Cage Fight run read 0.996 Tyranny, 0.986 Cage
+    // Fight on most boards (0.956 and 0.941 with the badge partly hidden).
+    // A card with a look-alike leaves it to the player, or to the jaws
+    // (js/analyze.js): alike lists the candidates, best first.
+    const alike = ranked.filter((id) => lookAlike(ref, best.id, id));
+    if (alike.length > 1) return { id: null, alike, score, box };
+    return { id: best.id, score, box };
+  }
+
+  // Whether two cards' badge samples look alike (over 0.95 against each
+  // other: a picture of either matches both). Worked out once a reference.
+  const lookAlikes = new WeakMap();
+  function lookAlike(ref, a, b) {
+    if (a === b) return true;
+    let pairs = lookAlikes.get(ref);
+    if (!pairs) {
+      pairs = new Set();
+      const list = ref.badges || [];
+      for (const x of list) for (const y of list) if (x.id !== y.id && similarity(x.feat, y.feat) > 0.95) pairs.add(`${x.id} ${y.id}`);
+      lookAlikes.set(ref, pairs);
     }
-    return { id: best && best.score > 0.95 ? best.id : null, score: best ? Math.round(best.score * 1000) / 1000 : 0, box };
+    return pairs.has(`${a} ${b}`);
   }
 
   // A tool's art as a color picture on a 4x6 grid plus a hue histogram.
@@ -1735,9 +1760,31 @@
     // A filled slot's portrait is mostly lit (0.54-0.98 of it, dimmed under
     // "Return to Selection" too), an empty one dark (0.02 at most), the
     // mouse pointer over one 0.17 (the user's boards).
+    // The glow over a filled slot spills into the empty one under it: there
+    // the light is a dim, strongly colored red (0.39-0.43 of an empty slot
+    // lit, under 2% of it bright, the lit part's saturation 0.57-0.59, on
+    // Giovanni's and Marco's 1920x1080 boards: 2 read as 3, 4 as 5), where
+    // a portrait is grey to colored (saturation 0.24-0.47) with a bright
+    // part (3-4% dimmed under "Return to Selection", 65% or more else).
+    const glowOnly = (q) => {
+      let lit = 0;
+      let bright = 0;
+      let sat = 0;
+      for (let y = Math.max(0, Math.round(q.y - 18 * u)); y <= Math.min(img.height - 1, q.y + 18 * u); y++) {
+        for (let x = Math.max(0, Math.round(q.x - 18 * u)); x <= Math.min(img.width - 1, q.x + 18 * u); x++) {
+          const [r, g, b] = rgbAt(img, x, y);
+          const hi = Math.max(r, g, b);
+          if (hi <= 51) continue;
+          lit += 1;
+          if (hi > 80) bright += 1;
+          sat += (hi - Math.min(r, g, b)) / hi;
+        }
+      }
+      return lit > 0 && bright < 0.1 * lit && sat / lit > 0.5;
+    };
     const slots = grid(best.ox, best.oy).map((q) => {
       const share = lightShare(q.x, q.y);
-      return { x: q.x, y: q.y, share, filled: share > 0.35 };
+      return { x: q.x, y: q.y, share, filled: share > 0.35 && !glowOnly(q) };
     });
     // Slots fill in order: a light one after an empty one is something
     // else (two saved screenshots).
@@ -2358,7 +2405,7 @@
     return { ok: true, loc, cells, warden, doors, days, tools, badge, chromatic, objective, chain, decision, statusView, notes, geometry, ms: Date.now() - t0 };
   }
 
-  const api = { scan, scanPick, choiceLayout, boardGeometry, pickArtBox, pickRerollShown, locateBoard, readCell, findWarden, findToolIcons, readDoors, readDays, doorCards, dayNumber, prefixVector, textLines, glyphVector, faceVector, artFeature, similarity, hsv, blobs, at, gridOf, scaleAt, grayOf, blur, RING, H0, ARROW, FACE, GLYPH, locateByLabels, readChainScreen, readDecision, readObjectiveTitle, withPanelIcons, badgeBox, readBadge };
+  const api = { scan, scanPick, choiceLayout, boardGeometry, pickArtBox, pickRerollShown, locateBoard, readCell, findWarden, findToolIcons, readDoors, readDays, doorCards, dayNumber, prefixVector, textLines, glyphVector, faceVector, artFeature, similarity, hsv, blobs, at, gridOf, scaleAt, grayOf, blur, RING, H0, ARROW, FACE, GLYPH, locateByLabels, readChainScreen, readDecision, readObjectiveTitle, withPanelIcons, badgeBox, readBadge, readChromatic };
   if (typeof module === 'object' && module.exports) module.exports = api;
   root.TartarusScan = api;
 })(typeof window !== 'undefined' ? window : typeof self !== 'undefined' ? self : globalThis);
