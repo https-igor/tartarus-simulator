@@ -223,8 +223,10 @@
   // vaulted. One a Rainbow, each with its Warden's Treasure, in every run of
   // the logs checked (29 runs), the last move before the Riot included: the
   // run's count, even when no picture comes after that move. Its time in the
-  // log goes with it (the time only, never the line), for the record.
-  const RAINBOW = /UI_S16_Premium_Quality\b/;
+  // log goes with it (the time only, never the line), for the record. Only
+  // the sound's own line: the game writes a warning with the sound's name
+  // right after it, which counted every Rainbow twice (0.2.18-3).
+  const RAINBOW = /AudioEnum\s*==\s*UI_S16_Premium_Quality\b/;
   const riotWatch = (s) => {
     if (DAY_ONE.test(s.line)) D.run('day1');
     if (RAINBOW.test(s.line) && typeof D.rainbow === 'function') D.rainbow(s.at);

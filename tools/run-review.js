@@ -428,8 +428,15 @@ function soundsOf(entries, decisions, tail, log) {
   const lastAt = Date.parse(last.at);
   const riot = entries.find((e) => e.type === 'riot' && Date.parse(e.at) > lastAt) || null;
   const riotAt = riot ? Date.parse(riot.at) : null;
-  // The record's own lines, from the log as it was followed.
-  const lines = entries.filter((e) => e.type === 'log-rainbow');
+  // The record's own lines, from the log as it was followed. The app's
+  // 0.2.18-3 wrote two a sound (its line, and the game's warning with the
+  // sound's name a few ms after): one within 50 ms of the one before is
+  // that warning.
+  const lines = entries.filter((e) => e.type === 'log-rainbow').filter((e, k, all) => {
+    const t = logMs(e.logAt);
+    const before = k ? logMs(all[k - 1].logAt) : null;
+    return t == null || before == null || t - before > 50;
+  });
   if (lines.length) {
     return { source: 'written into the record by the app', count: lines.length, after: lines.filter((e) => Date.parse(e.at) > lastAt).length, through: !!riot };
   }
