@@ -25,12 +25,10 @@
   // geometry: the scan result's geometry (a board), or null. layout:
   // TartarusScan.choiceLayout's (a Treasure or an instrument offer), or
   // null. model: the analyzer's board ({ warden, choice }). opts: { id,
-  // width, height, provisional } (provisional: a gift advised on the board
-  // before the Treasure, not seen behind it yet). The payload, or null when
-  // nothing of the advice shows in the picture. Its likely: the move isn't
-  // final yet (the strategy's pick while the live check runs, advice.likely,
-  // or a provisional gift), so the marks window draws it faint and dashed:
-  // a fast player who clicks it may see the check switch the move after.
+  // width, height }. The payload, or null when nothing of the advice shows
+  // in the picture. Its likely (advice.likely): the move isn't final yet,
+  // so the marks window draws it faint and dashed (the analyzer no longer
+  // sends one: its marks wait for the final advice).
   function fromAdvice(advice, geometry, layout, model, opts) {
     const o = opts || {};
     const a = advice && advice.action;
@@ -84,10 +82,7 @@
         const offer = (model && model.choice && model.choice.options) || [];
         const k = lay.kind === 'treasure' ? gift : lay.kind === 'instruments' && gift < 0 ? offer.indexOf(a.id) : -1;
         add(box(lay.cards[k], 'go', 'Take'));
-        if (!marks.length) break;
-        // Provisional: View Prison Status first, to check the board behind.
-        if (o.provisional) add(box(lay.view, 'hint', 'Check the board'));
-        else add(box(lay.confirm, 'target', 'Confirm'));
+        if (marks.length) add(box(lay.confirm, 'target', 'Confirm'));
         break;
       }
       case 'reroll':
@@ -111,13 +106,25 @@
       width: o.width || size.width,
       height: o.height || size.height,
       title: String(advice.label || '').slice(0, 80),
-      likely: !!(advice.likely || o.provisional),
+      likely: !!advice.likely,
       marks,
       arrows: arrows.filter(Boolean),
     };
   }
 
-  const api = { fromAdvice, GIFT_ORDER };
+  // The Warden's Treasure before the board behind it is seen: the eye (View
+  // Prison Status) is the one mark, since the gift advice waits for that
+  // board. layout: TartarusScan.choiceLayout's for the Treasure. opts: { id,
+  // width, height }. The payload, or null when the eye isn't in the picture.
+  function lookFirst(layout, opts) {
+    const o = opts || {};
+    const lay = layout || {};
+    const eye = box(lay.view, 'go', 'View Prison Status first');
+    if (!eye) return null;
+    return { id: o.id || 0, width: o.width || lay.width, height: o.height || lay.height, title: 'Check the board first', likely: false, marks: [eye], arrows: [] };
+  }
+
+  const api = { fromAdvice, lookFirst, GIFT_ORDER };
   if (typeof module === 'object' && module.exports) module.exports = api;
   root.TartarusMarks = api;
 })(typeof window !== 'undefined' ? window : typeof self !== 'undefined' ? self : globalThis);

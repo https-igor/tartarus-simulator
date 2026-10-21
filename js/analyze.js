@@ -442,6 +442,13 @@
   // move played here, another board), so a board they fixed is shared as
   // fixed, not as a misreading followed by a step that never happened.
   let held = null;
+  // A mid-run instrument offer (an objective's reward) waits, as the
+  // Warden's Treasure does, for the board behind it, which may have changed
+  // since the last picture: the eye (View Prison Status) shows it (the
+  // user, 2026-10-20). { seen }: whether that board was read; null for no
+  // such offer.
+  let pickWait = null;
+  const waiting = () => !!model.treasureWait || !!(pickWait && !pickWait.seen);
   // Instruments on that screenshot the reader wasn't sure of, to check too.
   let shotTools = [];
   // An instrument read below this is shown as one to check. On the labeled
@@ -482,7 +489,7 @@
 
   // ---------- Analysis ----------
 
-  const solver = { workers: null, failed: false, id: 0, st: null, key: '', instant: null, result: null, shares: null, meta: null, goal: '', provisional: false };
+  const solver = { workers: null, failed: false, id: 0, st: null, key: '', instant: null, result: null, shares: null, meta: null, goal: '' };
   // The live check runs on a worker for every core but one, or on fewer when
   // the page is told (setCores: the desktop app's processor setting), each
   // playing its share of the rounds with its own dice. It runs for a few
@@ -524,14 +531,17 @@
   // done with, and this one, not seen yet, isn't shared: the next board
   // starts a new run.
   function ask(quiet, fresh) {
-    // A Warden's Treasure waiting for the board behind it: a provisional
-    // gift advice on the board as last seen (it may have changed under the
-    // Treasure), never shared, until the board behind it is seen.
-    if (model.treasureWait) {
-      const { st, problems } = buildState(model);
+    // A Warden's Treasure or a mid-run instrument offer waiting for the
+    // board behind it: no advice, not even a provisional one, until that
+    // board is seen (View Prison Status), since a gift advised on the board
+    // as last seen led the player astray (the user, 2026-10-20). The marks
+    // point at the eye.
+    if (waiting()) {
+      solver.id += 1;
       solver.st = null;
-      if (problems.length) render();
-      else check(st, true, true);
+      solver.result = null;
+      solver.instant = null;
+      render();
       return false;
     }
     const { st, problems } = buildState(model);
@@ -565,13 +575,11 @@
       flags = new Set();
     }
     applied = null;
-    return check(st, quiet, false);
+    return check(st, quiet);
   }
 
-  // Starts the live check on st. provisional: a gift advised before the
-  // board behind the Treasure was seen.
-  function check(st, quiet, provisional) {
-    solver.provisional = provisional;
+  // Starts the live check on st.
+  function check(st, quiet) {
     solver.id += 1;
     solver.st = st;
     solver.key = modelKey();
@@ -750,8 +758,6 @@
   // 323: "recommended to End day instead of cancel consume").
   function recommendation() {
     const rec = bestMove();
-    // A gift advised before the board behind the Treasure was seen.
-    if (rec && solver.provisional) return Object.assign({}, rec, { provisional: true, label: `Provisional: ${rec.label}`, why: `Provisional: on the board before the Treasure — press View Prison Status to confirm. ${rec.why || ''}`.trim() });
     const rd = reader.reading;
     if (!rec || !rec.action || rec.action.type !== 'end' || !rd || !rd.chain || model.step !== 'manage') return rec;
     return Object.assign({}, rec, { label: 'Cancel the consume, then end the day', why: `Your game shows a meal pick, where a meal or Cancel are the choices. ${rec.why || ''}`.trim() });
@@ -1016,8 +1022,8 @@
     const rec = fresh() && settled() ? recommendation() : null;
     let title;
     let detail;
-    if (model.treasureWait && !reading && !working && !rec) {
-      title = 'The Warden’s Treasure: check the board first';
+    if (waiting() && !reading && !working && !rec) {
+      title = model.treasureWait ? 'The Warden’s Treasure: check the board first' : 'The instrument offer: check the board first';
       detail = 'Press View Prison Status in the game, wait a second on the board, then return. Auto Screenshot Mode reads the board while you look.';
     } else if (reading) {
       title = 'Reading the new picture…';
@@ -1028,7 +1034,7 @@
       detail = `${T.plural(c.moves.length, 'move')}: ${c.played.toLocaleString()} of ${c.total.toLocaleString()} games played`;
     } else if (rec) {
       title = rec.label;
-      detail = rec.provisional ? 'Provisional: on the board before the Treasure — press View Prison Status to confirm.' : rec.option ? expectText(solver.result.goal, rec.option, solver.st) : 'Checking with playouts…';
+      detail = rec.option ? expectText(solver.result.goal, rec.option, solver.st) : 'Checking with playouts…';
     } else {
       const day = `Day ${model.day} of ${model.maxDays}`;
       title = 'Your board';
@@ -1216,7 +1222,8 @@
   const actionKey = (a) => [a.type, a.cell, a.to, a.id, a.accept, a.choice].join('|');
 
   function renderResults() {
-    $('az-treasure-wait').hidden = !model.treasureWait;
+    $('az-treasure-wait').hidden = !waiting();
+    $('az-treasure-wait-title').textContent = model.treasureWait ? 'The Warden’s Treasure is open' : 'An instrument offer, mid-run';
     const box = $('az-results');
     box.hidden = !solver.st;
     if (!solver.st) return;
@@ -1230,7 +1237,7 @@
     // The board changed since this check: its advice was for the board
     // before, so it isn't shown (report 304: a player took the dimmed move
     // for the advice on the new board). Recheck gives the new advice.
-    $('az-res-eyebrow').textContent = stale ? 'The board changed' : solver.provisional ? 'Provisional' : 'Recommended';
+    $('az-res-eyebrow').textContent = stale ? 'The board changed' : 'Recommended';
     // Always through setHTML, which skips what it wrote last: a headline
     // written past it left a new check showing the old move.
     if (stale) setHTML($('az-res-move'), 'Press Recheck for advice on this board');
@@ -1670,18 +1677,26 @@
       .then(() => done(window.TartarusScan.choiceLayout ? window.TartarusScan.choiceLayout(imageData, 'treasure') : null))
       .catch(() => done(null));
   }
-  // While the live check runs, the strategy's own pick, shown at once as
-  // the likely move: the check kept it in ~96% of a run's decisions, and
-  // the advice switches only if the check finds a clearly better one.
+  // No likely move while the live check runs: a move shown at once and
+  // switched a moment later led the player astray, so the marks wait for
+  // the final advice (the user, 2026-10-20). Kept for the app's adapter.
   function likely() {
-    if (reading || !fresh() || settled() || !solver.instant || solver.provisional) return null;
-    return Object.assign({}, solver.instant, { likely: true });
+    return null;
   }
 
   function marks() {
-    const rec = reading || !fresh() ? null : settled() ? recommendation() : likely();
     const M = window.TartarusMarks;
-    const p = rec && M && view.n ? M.fromAdvice(rec, view.geometry, view.layout, model, { width: view.width, height: view.height, provisional: !!solver.provisional }) : null;
+    const size = { width: view.width, height: view.height };
+    let p = null;
+    if (!M || !view.n || reading) p = null;
+    // The Warden's Treasure or a mid-run instrument offer before the board
+    // behind it is seen: only the eye (View Prison Status), the step the
+    // advice waits for.
+    else if (waiting()) p = M.lookFirst(view.layout, size);
+    else if (fresh() && settled()) {
+      const rec = recommendation();
+      p = rec ? M.fromAdvice(rec, view.geometry, view.layout, model, size) : null;
+    }
     if (!p) return null;
     const key = JSON.stringify(p);
     if (key !== marked.key) {
@@ -1880,6 +1895,23 @@
         const unsure = reader.reading.checks.size;
         // View Prison Status (its "Return to Selection"): the board behind
         // the Treasure, even when the Treasure itself wasn't seen (report 325).
+        // The board behind a mid-run instrument offer: the offer's pick, on it.
+        if (pickWait && result.statusView && model.step === 'choice' && model.choice.kind === 'tool') {
+          const choice = model.choice;
+          useScan(true);
+          model.step = 'choice';
+          model.choice = choice;
+          pickWait.seen = true;
+          changed();
+          renderScan();
+          const asked = ask(true);
+          toast(`Board seen behind the instrument offer. ${asked ? 'Which to take is below.' : 'The board needs fixing before the advice.'}`, asked ? 'ok' : 'bad');
+          return;
+        }
+        // Any other board: the one behind an offer still waiting (the eye's
+        // view, not told apart), whose advice then comes back at the offer
+        // at once; or, once seen, the board after the pick.
+        if (pickWait && !result.statusView) pickWait = pickWait.seen ? null : { seen: true };
         const behindTreasure = model.treasureWait || !!result.statusView;
         useScan(true);
         if (behindTreasure) {
@@ -2353,6 +2385,10 @@
       selected = model.warden;
     }
     if (start) gifts.waiting = 0;
+    // A mid-run offer with the eye waits for the board behind it, unless
+    // that was seen already (back from it, or a re-roll).
+    if (start || !(read.layout && read.layout.view)) pickWait = null;
+    else if (!pickWait) pickWait = { seen: false };
     // The offer's cards in its picture, for the desktop app's marks.
     setView(++view.seq, read.width || 0, read.height || 0, null, read.layout);
     model.step = 'choice';
@@ -2373,7 +2409,8 @@
       return false;
     }
     const asked = ask(true, start);
-    toast(`${start ? 'A fresh run: the instrument offer is' : 'An instrument offer:'} ${read.names.join(', ')}${read.reroll ? ', with a re-roll left' : ''}. ${asked ? 'Which to take is below.' : 'It needs fixing before the advice.'}${check}`, unsure.length ? 'bad' : 'ok');
+    const next = waiting() ? 'Press View Prison Status (the eye) in the game, wait a second on the board, then go back: which to take comes once the board behind it is read.' : asked ? 'Which to take is below.' : 'It needs fixing before the advice.';
+    toast(`${start ? 'A fresh run: the instrument offer is' : 'An instrument offer:'} ${read.names.join(', ')}${read.reroll ? ', with a re-roll left' : ''}. ${next}${check}`, unsure.length ? 'bad' : 'ok');
     return asked;
   }
 
@@ -2462,9 +2499,8 @@
     model.treasureSeen = false;
     changed();
     renderScan();
-    // A provisional gift advice at once, on the board as last seen.
     ask(true);
-    toast(`The Warden’s Treasure is open.${how} A provisional gift advice, on the board before the Treasure, follows below. To confirm it on the board as it is now, press View Prison Status in the game, wait a second on the board, then return to the Treasure.`, 'ok');
+    toast(`The Warden’s Treasure is open.${how} Press View Prison Status (the eye) in the game, wait a second on the board, then return to the Treasure: the gift advice comes once the board behind it is read.`, 'ok');
     return false;
   }
 
@@ -3554,7 +3590,8 @@
       else $('az-scan').scrollIntoView({ block: 'start', behavior: 'smooth' });
     });
     $('az-treasure-now').addEventListener('click', () => {
-      // Advise the gift on the board as the analyzer has it.
+      // Advise on the board as the analyzer has it.
+      if (pickWait) pickWait.seen = true;
       model.treasureWait = false;
       model.treasureSeen = true;
       gifts.board = gifts.log ? Object.assign({}, gifts.log) : null;

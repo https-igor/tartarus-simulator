@@ -84,7 +84,7 @@
     if (f && (f.log !== 'on' || f.window !== 'on')) return 'Connecting…';
     if (f && f.detail === 'off') return 'Turn on Enable Log in the game';
     if (a && a.reading) return 'Reading the picture…';
-    if (a && a.treasureWait) return 'Treasure: press View Prison Status';
+    if (a && a.treasureWait) return 'Press View Prison Status (the eye)';
     if (a && a.toolsConfirm) return sh.siteUpdate ? 'Confirm instruments, or Reload for the update' : 'Confirm your instruments';
     if (a && a.problems && a.problems.length) return 'The board needs a fix';
     if (a && a.working) return `Working it out${a.progress !== null && a.progress !== undefined ? `: ${a.progress}%` : '…'}`;
@@ -123,10 +123,9 @@
     if (a && a.toolsConfirm) out.push(line('warn', a.toolsConfirm, button('These are right', 'tools-ok'), button('Board', 'board')));
     // A game client not in English: a screen the reader didn't recognize.
     if (a && a.langMiss && Date.now() - a.langMiss.at < 120000) out.push(line('warn', a.langMiss.what === 'board' ? `Your game is in ${a.langMiss.lang}: check today's doors, and set the Replace and Consume decisions by hand on the board analyzer, and send it this board's screenshot once, to help it learn your language.` : `The ${a.langMiss.what} wasn't read (your game is in ${a.langMiss.lang}). Set it on the board analyzer, and send the screenshot from there.`, button('Board', 'board')));
-    // The Warden's Treasure covers the board: the gift waits for a look at it.
-    // The Warden's Treasure: a provisional gift comes by itself; a look at
-    // the board (the eye, View Prison Status) confirms it.
-    if (a && a.treasureWait) out.push(line('info', a.move ? 'Provisional gift. To confirm it, press the eye (View Prison Status), wait a second on the board, then go back.' : 'The Warden’s Treasure is open: working out a gift…'));
+    // The Warden's Treasure or a mid-run instrument offer covers the board:
+    // the advice waits for a look at it (the eye, View Prison Status).
+    if (a && a.treasureWait) out.push(line('info', 'Press the eye (View Prison Status), wait a second on the board, then go back: the advice comes once the board behind is read.'));
     if (a && a.problems && a.problems.length) {
       out.push(line('warn', `The board needs a fix: ${a.problems[0]}`, button('Fix', 'fix', true)));
     } else if (a && a.has && a.working && a.likely && a.move) {
