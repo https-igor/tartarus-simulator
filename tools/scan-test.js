@@ -98,8 +98,9 @@ function add(a, b) {
 //     where the reader placed the board.
 const FIXTURES = [
   // The user's Cage Fight run (records 2026-10-18T20-47-02, board 3, 2560x1300):
-  // its badge looks like Tyranny's too, so the reader leaves the card open.
-  { file: 'badge-cagefight_2026-10-18.png', label: { x0: 40, x1: 272, y1: -516 }, want: { id: null, alike: ['tyranny', 'cagefight'] } },
+  // its badge looked like Tyranny's, until the 'Tyranny' sample turned out
+  // to be a Cage Fight badge (upstream d073ffb): it now reads Cage Fight.
+  { file: 'badge-cagefight_2026-10-18.png', label: { x0: 40, x1: 272, y1: -516 }, want: { id: 'cagefight' } },
   // The glow under the last filled slot read as one more (Marco's
   // 2026-10-19T22-34-12 board 20, 2 read as 3; Giovanni's
   // 2026-10-19T22-05-28 board 73, 4 as 5).

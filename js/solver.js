@@ -57,7 +57,7 @@
     maidenSwapTier: 3, // holding the Severed Iron Maiden, swap up to this tier (Legendary measured best)
     execMargin: 0, // accept an Execution worth more than this
     acceptChain: true, // accept Chain reactions
-    toolRank: ['trap', 'maul', 'crown', 'rope', 'claws', 'coin', 'maiden', 'shackles', 'scapegoat', 'revenge', 'muzzle', 'skewer', 'collar', 'ravenous', 'hook', 'saw', 'blacklist', 'guillotine', 'dogtag', 'tongs', 'stake', 'cage', 'whip', 'scales', 'keys', 'pestle', 'fire', 'shortchain', 'axe', 'forged', 'ironbox'], // measured: each tool held from day 1
+    toolRank: ['trap', 'maul', 'crown', 'rope', 'claws', 'maiden', 'coin', 'shackles', 'scapegoat', 'revenge', 'muzzle', 'skewer', 'collar', 'ravenous', 'hook', 'saw', 'blacklist', 'guillotine', 'dogtag', 'tongs', 'stake', 'cage', 'whip', 'scales', 'keys', 'pestle', 'fire', 'shortchain', 'axe', 'forged', 'ironbox'], // measured: each tool held from day 1
     toolSets: true, // pick instruments by the measured sets (js/tool-combos.js) when there are any
     office: null, // always 'bestow' or 'instigate' at the office (only to measure the habit)
     giftRank: null, // null scores the gifts on the spot; or a fixed order
@@ -76,8 +76,8 @@
   // day 1: +0.066 ±0.031 Rainbows a run on fresh seeds. wForged and wFire
   // measured no gain and stay 0.
   const PROFILES = {
-    rewards: { tierBase: 3, rainbowMult: 1.5, wOpen: 1.5, wNow: 0.844, wWalk: 0.75, wStep: 0.5, wChain: 6, wStair: 0.25, swapMaxTier: 3, minDevour: 0, execMargin: 0, acceptChain: true, wCrow: 1, wIncident: 40, wPass: 40, wOfficeIncident: 60, wConsume: 20, wKeys: 1, toolRank: ['trap', 'maul', 'crown', 'rope', 'claws', 'coin', 'maiden', 'shackles', 'scapegoat', 'revenge', 'muzzle', 'skewer', 'collar', 'ravenous', 'hook', 'saw', 'blacklist', 'guillotine', 'dogtag', 'tongs', 'stake', 'cage', 'whip', 'scales', 'keys', 'pestle', 'fire', 'shortchain', 'axe', 'forged', 'ironbox'] },
-    notools: { tierBase: 2.75, rainbowMult: 12, wOpen: 2.25, wNow: 0.375, wWalk: 1.875, wStep: 0.5, wChain: 24, wStair: 0.125, swapMaxTier: 1, minDevour: 0, execMargin: -5, acceptChain: false, wCrow: 1, toolRank: ['trap', 'maul', 'crown', 'rope', 'claws', 'coin', 'maiden', 'shackles', 'scapegoat', 'revenge', 'muzzle', 'skewer', 'collar', 'ravenous', 'hook', 'saw', 'blacklist', 'guillotine', 'dogtag', 'tongs', 'stake', 'cage', 'whip', 'scales', 'keys', 'pestle', 'fire', 'shortchain', 'axe', 'forged', 'ironbox'] },
+    rewards: { tierBase: 3, rainbowMult: 1.5, wOpen: 1.5, wNow: 0.844, wWalk: 0.75, wStep: 0.5, wChain: 6, wStair: 0.25, swapMaxTier: 3, minDevour: 0, execMargin: 0, acceptChain: true, wCrow: 1, wIncident: 40, wPass: 40, wOfficeIncident: 60, wConsume: 20, wKeys: 1, toolRank: ['trap', 'maul', 'crown', 'rope', 'claws', 'maiden', 'coin', 'shackles', 'scapegoat', 'revenge', 'muzzle', 'skewer', 'collar', 'ravenous', 'hook', 'saw', 'blacklist', 'guillotine', 'dogtag', 'tongs', 'stake', 'cage', 'whip', 'scales', 'keys', 'pestle', 'fire', 'shortchain', 'axe', 'forged', 'ironbox'] },
+    notools: { tierBase: 2.75, rainbowMult: 12, wOpen: 2.25, wNow: 0.375, wWalk: 1.875, wStep: 0.5, wChain: 24, wStair: 0.125, swapMaxTier: 1, minDevour: 0, execMargin: -5, acceptChain: false, wCrow: 1, toolRank: ['trap', 'maul', 'crown', 'rope', 'claws', 'maiden', 'coin', 'shackles', 'scapegoat', 'revenge', 'muzzle', 'skewer', 'collar', 'ravenous', 'hook', 'saw', 'blacklist', 'guillotine', 'dogtag', 'tongs', 'stake', 'cage', 'whip', 'scales', 'keys', 'pestle', 'fire', 'shortchain', 'axe', 'forged', 'ironbox'] },
   };
   const paramsFor = (st) => PROFILES[st.params.rewards ? 'rewards' : 'notools'];
 
@@ -249,12 +249,13 @@
     // locked doors; the open board below Rainbow; Long-Chained Shackles'
     // +1 tier on a random inmate (lift) and two tiers for every inmate
     // (allLift2, Usurpation IV); the Maiden's count by tier; the board's
-    // worth (the Scapegoat's loss).
+    // worth beside the warden's inmate (the Scapegoat's loss).
     let sealed = 0;
     let boardCount = 0;
     let liftSum = 0;
     let allLift2 = 0;
-    let worth = 0;
+    let othersWorth = 0;
+    let atPosition = false;
     const tierCounts = [0, 0, 0, 0, 0];
     for (const c of st.cells) {
       if (c.sealed) sealed += 1;
@@ -263,7 +264,8 @@
       boardCount += 1;
       liftSum = liftSum + (t + 1 >= RAINBOW ? R : v[t + 1]) - v[t];
       allLift2 = allLift2 + (t + 2 >= RAINBOW ? R : v[t + 2]) - v[t];
-      worth = worth + v[t];
+      if (c.n === st.position) atPosition = true;
+      else othersWorth = othersWorth + v[t];
       if (t === 0 || t === 1 || t === 2 || t === 3 || t === 4) tierCounts[t] += 1;
     }
     const lift = liftSum / Math.max(1, boardCount);
@@ -316,8 +318,10 @@
       maiden: maiden ? tierCounts : null,
       // Scapegoat's Guillotine, with 2 or more others beside the warden's
       // inmate: a swap comes in above the rarity it replaces, and 2 random
-      // inmates go (what they're worth on average).
-      scapegoat: scapegoat ? { loss: (2 * worth) / boardCount } : null,
+      // others go, what 2 of them are worth on average (the inmate replaced
+      // isn't one of them: counting it understated the loss beside a
+      // Normal, the user's game of 2026-10-20).
+      scapegoat: scapegoat && atPosition ? { loss: (2 * othersWorth) / (boardCount - 1) } : null,
       // Burning Stake: a swap from below Legendary may come in Legendary.
       stake: has(st, 'stake'),
       // The highest tier worth swapping: higher with the Maiden, up to Rare
@@ -603,8 +607,8 @@
 
   // What swapping an inmate of this tier is worth, on average. With the
   // Gaoler's Execution Axe, a higher roll also opens 2 doors. With the
-  // Severed Iron Maiden, a roll with as many inmates above it as below it
-  // gains 3 tiers.
+  // Severed Iron Maiden, an inmate with as many above it as below it
+  // brings the roll in 3 tiers up.
   // Kept per context and tier: it reads only the context.
   function swapValue(ctx, tier) {
     const kept = ctx.swapValues.get(tier);
@@ -621,22 +625,22 @@
     return value + maidenBonus(ctx, tier).value;
   }
 
-  // Severed Iron Maiden: the chance that a swap's newcomer has as many
-  // inmates above its rarity as below it, and what its 3 extra tiers add on
-  // average. The block is counted without the inmate swapped out.
+  // Severed Iron Maiden, as its card reads: a swap of an inmate with as
+  // many inmates above its rarity as below it (the block as it is, before
+  // the Scapegoat's Guillotine removes any) brings the newcomer in 3 tiers
+  // up. chance is 1 or 0; value is what the 3 tiers add on average.
   function maidenBonus(ctx, tier) {
     const out = { chance: 0, value: 0 };
     if (!ctx.maiden) return out;
-    const dist = swapDist(ctx, tier);
     const counts = ctx.maiden.slice();
     if (counts[tier] > 0) counts[tier] -= 1;
-    for (let t = 0; t < dist.length; t++) {
-      const above = counts.reduce((sum, n, u) => sum + (u > t ? n : 0), 0);
-      const below = counts.reduce((sum, n, u) => sum + (u < t ? n : 0), 0);
-      if (!dist[t] || above !== below) continue;
-      out.chance += dist[t];
-      out.value += dist[t] * ((t + 3 >= RAINBOW ? ctx.R : ctx.v[t + 3]) - ctx.v[t]);
-    }
+    const above = counts.reduce((sum, n, u) => sum + (u > tier ? n : 0), 0);
+    const below = counts.reduce((sum, n, u) => sum + (u < tier ? n : 0), 0);
+    if (above !== below) return out;
+    const dist = swapDist(ctx, tier);
+    const val = (t) => (t >= RAINBOW ? ctx.R : ctx.v[t]);
+    out.chance = 1;
+    for (let t = 0; t < dist.length; t++) if (dist[t]) out.value += dist[t] * (val(Math.min(RAINBOW, t + 3)) - val(t));
     return out;
   }
 
@@ -932,14 +936,18 @@
     }
   }
 
-  // What a prey mark still promises: both inmates rise a tier each morning.
+  // What a prey mark still promises: both inmates rise a tier each morning,
+  // for the mornings left in the mark and in the run. A mark made on the
+  // last day never pays: the riot comes before the next morning.
   function linkValue(st, ctx, link) {
+    const rounds = Math.max(0, Math.min(link.rounds, (st.maxDays || T.DEFAULT_PARAMS.drillDays) - st.day));
+    if (!rounds) return 0;
     let value = 0;
     for (const id of [link.lion, link.prey]) {
       const cell = T.cellOf(st, id);
       if (!cell || !cell.inmate) continue;
       const t = cell.inmate.tier;
-      const to = Math.min(RAINBOW, t + link.rounds);
+      const to = Math.min(RAINBOW, t + rounds);
       value += (to >= RAINBOW ? ctx.R : ctx.v[to]) - ctx.v[t];
     }
     return value;
@@ -1169,24 +1177,34 @@
 
   // A pet's re-roll: what the best instrument on offer adds, against what
   // the best of a new offer of 3 adds on average (every 3 the re-roll could
-  // show, from the instruments neither held nor on offer). Null without
-  // measured sets.
+  // show, from the instruments neither held nor on offer, each drawn by its
+  // odds: the instruments named for a beast are rare, T.toolWeight). Null
+  // without measured sets.
   function rerollOdds(st, options) {
     const others = T.TOOL_IDS.filter((id) => !st.tools.includes(id) && !options.includes(id));
     const pool = others.length >= 3 ? others : T.TOOL_IDS.filter((id) => !st.tools.includes(id));
     const gains = toolGains(st, [...new Set([...options, ...pool])]);
     if (!gains || pool.length < 3) return null;
-    let sum = 0;
-    let n = 0;
+    // Every ordered draw of 3 cards, without putting one back.
+    const w = pool.map((id) => (T.toolWeight ? T.toolWeight(st, id) : 1));
+    const total = w.reduce((a, x) => a + x, 0);
+    let next = 0;
+    let mass = 0;
     for (let i = 0; i < pool.length; i++) {
-      for (let j = i + 1; j < pool.length; j++) {
-        for (let k = j + 1; k < pool.length; k++) {
-          sum += Math.max(gains[pool[i]], gains[pool[j]], gains[pool[k]]);
-          n += 1;
+      for (let j = 0; j < pool.length; j++) {
+        if (j === i || total - w[i] <= 0) continue;
+        const pij = (w[i] / total) * (w[j] / (total - w[i]));
+        const rest = total - w[i] - w[j];
+        if (rest <= 0) continue;
+        for (let k = 0; k < pool.length; k++) {
+          if (k === i || k === j) continue;
+          const p = pij * (w[k] / rest);
+          next += p * Math.max(gains[pool[i]], gains[pool[j]], gains[pool[k]]);
+          mass += p;
         }
       }
     }
-    return { now: Math.max(...options.map((id) => gains[id])), next: sum / n };
+    return { now: Math.max(...options.map((id) => gains[id])), next: mass > 0 ? next / mass : 0 };
   }
 
   const signed = (v) => `${v >= 0 ? '+' : '\u2212'}${Math.abs(v).toFixed(2)}`;
@@ -1824,10 +1842,10 @@
         // A day has a swap or a devour, not both.
         const over = T.startOptions(st).length ? ' That beats today’s best consume, and a day has one or the other.' : '';
         const maiden = maidenBonus(ctx, here.inmate.tier);
-        const odds = `${(100 * maiden.chance).toFixed(0)}% of the time`;
-        if (here.ivory) return `A Tusk cell: replacing its inmate raises other inmates a tier${maiden.chance > 0 ? `, and the Severed Iron Maiden adds 3 tiers to the new inmate ${odds}` : ''}.${over}`;
+        const level = `as many inmates stand above this ${T.tierName(here.inmate.tier)} as below it`;
+        if (here.ivory) return `A Tusk cell: replacing its inmate raises other inmates a tier${maiden.chance > 0 ? `, and the Severed Iron Maiden adds 3 tiers to the new inmate: ${level}` : ''}.${over}`;
         if (ctx.scapegoat) return `The Scapegoat's Guillotine brings the new inmate in above ${T.tierName(here.inmate.tier)}${here.inmate.tier >= T.SUPREME ? ', a Chromatic' : ''}, worth more than the 2 random inmates it removes.${over}`;
-        if (maiden.chance > 0) return `The Severed Iron Maiden adds 3 tiers to the new inmate ${odds}, so a fresh roll beats this ${T.tierName(here.inmate.tier)} inmate on average.${over}`;
+        if (maiden.chance > 0) return `The Severed Iron Maiden adds 3 tiers to the new inmate: ${level}.${over}`;
         if (ctx.axeDoors) return `A ${T.tierName(here.inmate.tier)} inmate is worth less than a fresh roll on average, and a higher roll makes the Gaoler's Execution Axe open ${T.plural(ctx.axeDoors, 'door')}.${over}`;
         return `A ${T.tierName(here.inmate.tier)} inmate is worth less than a fresh roll on average.${over}`;
       }
