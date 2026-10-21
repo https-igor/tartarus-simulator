@@ -1540,16 +1540,24 @@
           }
         }
       }
+      // A slot much darker than the wall beside it is the wall itself, lit:
+      // a torch behind the panel lights its grate, which read as a second
+      // instrument on every board of 1920x1032 pictures (Marco's runs,
+      // 2026-10-20). A card is 0.77 of the wall's brightness or more there,
+      // the lit grate 0.59 or less (1000 boards of three players).
+      if (inside < 0.7 * wall) break;
+      const bw = ax1 - ax0 + 1;
+      const bh = ay1 - ay0 + 1;
       // A card holds art; past the last instrument there's only wall. A dark
-      // card with little art still counts if it's lighter than the wall.
-      if (art < 1.0 * h * h && !(art > 0.5 * h * h && inside > wall + 0.012)) break;
+      // card with little art still counts if it's lighter than the wall, or
+      // if its art is a tall drawing (the Hangman's Noose, a thin dark rope:
+      // half the art of most icons, missed on Giovanni's 1866x1080 boards).
+      if (art < 1.0 * h * h && !(art > 0.5 * h * h && inside > wall + 0.012) && !(art > 0.45 * h * h && bh >= 2.8 * h)) break;
       // An open tooltip spills its text over the next slots. Text is thin
       // strokes spread through a tall box, or a flat strip, where an icon is
       // a solid drawing (at least 7% of its box, never much wider than
       // tall), so the panel ends there.
-      const bw = ax1 - ax0 + 1;
-      const bh = ay1 - ay0 + 1;
-      if (art / (bw * bh) < 0.065 || bw > 2 * bh) break;
+      if (art / (bw * bh) < 0.045 || bw > 2 * bh) break;
       out.push({ box: [ax0, ay0, ax1, ay1], card: [x0, y0, x1, y1], art });
     }
     return { icons: out, found: true, label };
