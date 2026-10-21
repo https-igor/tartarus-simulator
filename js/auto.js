@@ -179,6 +179,15 @@
       answer({ state: 'same' });
       return;
     }
+    // The board behind a mid-run instrument offer (View Prison Status): the
+    // offer's advice, on it. Any other board also tells the offer's wait.
+    const behindPick = A.pickBoard ? A.pickBoard(!!read.statusView, cues) : null;
+    if (behindPick) {
+      lastBoardAt = Date.now();
+      answer({ state: 'used' });
+      if (behindPick.asked) answer({ asked: true });
+      return;
+    }
     A.useReading(cues);
     cues = null;
     if (A.langBoard) A.langBoard(bitmap);

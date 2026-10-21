@@ -1895,23 +1895,7 @@
         const unsure = reader.reading.checks.size;
         // View Prison Status (its "Return to Selection"): the board behind
         // the Treasure, even when the Treasure itself wasn't seen (report 325).
-        // The board behind a mid-run instrument offer: the offer's pick, on it.
-        if (pickWait && result.statusView && model.step === 'choice' && model.choice.kind === 'tool') {
-          const choice = model.choice;
-          useScan(true);
-          model.step = 'choice';
-          model.choice = choice;
-          pickWait.seen = true;
-          changed();
-          renderScan();
-          const asked = ask(true);
-          toast(`Board seen behind the instrument offer. ${asked ? 'Which to take is below.' : 'The board needs fixing before the advice.'}`, asked ? 'ok' : 'bad');
-          return;
-        }
-        // Any other board: the one behind an offer still waiting (the eye's
-        // view, not told apart), whose advice then comes back at the offer
-        // at once; or, once seen, the board after the pick.
-        if (pickWait && !result.statusView) pickWait = pickWait.seen ? null : { seen: true };
+        if (pickBoard(result.statusView, true)) return;
         const behindTreasure = model.treasureWait || !!result.statusView;
         useScan(true);
         if (behindTreasure) {
@@ -2502,6 +2486,30 @@
     ask(true);
     toast(`The Warden’s Treasure is open.${how} Press View Prison Status (the eye) in the game, wait a second on the board, then return to the Treasure: the gift advice comes once the board behind it is read.`, 'ok');
     return false;
+  }
+
+  // A board read while a mid-run instrument offer waits for it, from a
+  // pasted screenshot or Auto Screenshot Mode (which never passed here, so
+  // the offer waited for good: a player's runs of 2026-10-21). View Prison
+  // Status (statusView): the offer's pick, on that board; { asked }. Any
+  // other board: the one behind an offer still waiting (the eye's view, not
+  // told apart), whose advice then comes back at the offer at once; or,
+  // once seen, the board after the pick; null, for the caller to load it.
+  function pickBoard(statusView, cues) {
+    if (pickWait && statusView && model.step === 'choice' && model.choice.kind === 'tool') {
+      const choice = model.choice;
+      useScan(cues);
+      model.step = 'choice';
+      model.choice = choice;
+      pickWait.seen = true;
+      changed();
+      renderScan();
+      const asked = ask(true);
+      toast(`Board seen behind the instrument offer. ${asked ? 'Which to take is below.' : 'The board needs fixing before the advice.'}`, asked ? 'ok' : 'bad');
+      return { asked };
+    }
+    if (pickWait && !statusView) pickWait = pickWait.seen ? null : { seen: true };
+    return null;
   }
 
   // Without workers (a page opened from disk), reads on the page itself,
@@ -3535,6 +3543,8 @@
       langMiss: () => (langMiss ? { what: langMiss.what, at: langMiss.at, lang: langName(gameLang) } : null),
       useObjective: (read) => useObjective(read),
       useTreasure: (after) => useTreasure(after),
+      // A board while a mid-run instrument offer waits for it (pickBoard).
+      pickBoard: (statusView, cues) => pickBoard(statusView, cues || null),
       // Auto Screenshot Mode's Treasure counts ({ rainbows, taken }): the
       // picks waiting, or null without counts. giftsDone ends a tally that
       // went stale (no Treasure for a while).
