@@ -119,9 +119,9 @@
   function lookFirst(layout, opts) {
     const o = opts || {};
     const lay = layout || {};
-    const eye = box(lay.view, 'go', 'View Prison Status first');
+    const eye = box(lay.view, 'go', 'View Prison Status');
     if (!eye) return null;
-    return { id: o.id || 0, width: o.width || lay.width, height: o.height || lay.height, title: 'Check the board first', likely: false, marks: [eye], arrows: [] };
+    return { id: o.id || 0, width: o.width || lay.width, height: o.height || lay.height, title: 'Press the eye, then come back', likely: false, marks: [eye], arrows: [] };
   }
 
   const api = { fromAdvice, lookFirst, GIFT_ORDER };

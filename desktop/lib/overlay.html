@@ -64,33 +64,147 @@
     touch-action: none;
   }
 
-  .brand {
-    color: var(--teal);
-    font: 800 15px/1 var(--font-display);
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-  }
-
-  .score {
+  /* Days until the Riot: a ring that empties as the run goes. */
+  .ring {
+    position: relative;
     flex: none;
-    color: var(--ash);
-    font: 500 11px/1.2 var(--font-mono);
-    opacity: 0.85;
-    white-space: nowrap;
+    width: 40px;
+    height: 40px;
   }
 
-  .score:empty {
+  .ring svg {
+    width: 40px;
+    height: 40px;
+    transform: rotate(-90deg);
+  }
+
+  .ring circle {
+    fill: none;
+    stroke-width: 4;
+  }
+
+  .ring-bg {
+    stroke: var(--iron);
+  }
+
+  .ring-fg {
+    stroke: var(--teal);
+    stroke-linecap: round;
+    stroke-dasharray: 100.53;
+    transition: stroke-dashoffset 0.4s ease;
+  }
+
+  .ring span {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    color: var(--bone);
+    font: 800 16px/1 var(--font-display);
+  }
+
+  .title {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .goal {
+    overflow: hidden;
+    color: var(--teal);
+    font: 800 15px/1.1 var(--font-display);
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  .goal:empty {
     display: none;
   }
 
   .day {
-    flex: 1;
     min-width: 0;
     overflow: hidden;
     color: var(--ash);
     font: 500 11.5px/1.2 var(--font-mono);
     white-space: nowrap;
     text-overflow: ellipsis;
+  }
+
+  .day:empty {
+    display: none;
+  }
+
+  /* Rainbows now and expected, and the objective's count. */
+  .stats {
+    display: flex;
+    gap: 6px;
+    padding: 6px 10px 0;
+  }
+
+  .stat {
+    display: flex;
+    flex: 1;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 2px 8px;
+    padding: 5px 8px;
+    border-radius: 4px;
+    background: var(--slab);
+  }
+
+  .stat#obj {
+    flex: none;
+  }
+
+  .stat .k {
+    width: 100%;
+    color: var(--ash);
+    font: 500 10px/1.2 var(--font-mono);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .stat .v {
+    color: var(--bone);
+    font: 600 16px/1.1 var(--font-body);
+    white-space: nowrap;
+  }
+
+  .stat .v b {
+    font-size: 19px;
+  }
+
+  .stat .v .to,
+  .stat .v.is-done {
+    color: var(--teal);
+  }
+
+  .pips {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    margin-left: auto;
+  }
+
+  .pip {
+    width: 7px;
+    height: 7px;
+    border: 1px solid var(--iron-hi);
+    border-radius: 50%;
+  }
+
+  .pip.is-on {
+    border-color: var(--teal);
+    background: var(--teal);
+  }
+
+  .pip.is-due {
+    border-style: dashed;
+    border-color: var(--teal);
   }
 
   .head button {
@@ -208,6 +322,214 @@
     opacity: 0.55;
   }
 
+  .eyebrow-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .eyebrow-row .meta {
+    overflow: hidden;
+    font-size: 10.5px;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  .progress {
+    height: 2px;
+    margin: 3px 0 5px;
+    border-radius: 1px;
+    background: var(--iron);
+  }
+
+  .progress span {
+    display: block;
+    height: 2px;
+    border-radius: 1px;
+    background: var(--teal);
+    transition: width 0.3s ease;
+  }
+
+  /* A move kept up while the next picture is read or checked. */
+  .advice.is-held .move,
+  .advice.is-held .why,
+  .advice.is-likely .move {
+    opacity: 0.6;
+  }
+
+  .advice.is-held .eyebrow {
+    color: var(--ash);
+  }
+
+  .step2 {
+    display: flex;
+    align-items: flex-start;
+    gap: 7px;
+    margin: 4px 0 0;
+    color: var(--chalk);
+    font-size: 13px;
+  }
+
+  .step2 .n {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 17px;
+    height: 17px;
+    margin-top: 1px;
+    border: 1px solid var(--check);
+    border-radius: 50%;
+    color: var(--check);
+    font: 600 10.5px/1 var(--font-mono);
+  }
+
+  /* A question for the player, or a step to take before the advice. */
+  .ask {
+    margin: 0 0 6px;
+    padding: 8px 9px;
+    border: 1px solid color-mix(in srgb, var(--check) 50%, transparent);
+    border-radius: 4px;
+    background: color-mix(in srgb, var(--check) 8%, transparent);
+  }
+
+  .ask .eyebrow {
+    color: var(--check);
+  }
+
+  .ask p {
+    margin: 0 0 6px;
+    font-size: 13px;
+  }
+
+  .ask.is-look {
+    border-color: color-mix(in srgb, var(--teal) 45%, transparent);
+    background: color-mix(in srgb, var(--teal) 8%, transparent);
+  }
+
+  .ask.is-look .eyebrow {
+    color: var(--teal);
+  }
+
+  .ask.is-look .move {
+    font-size: 17px;
+  }
+
+  .ask-row {
+    display: flex;
+    gap: 6px;
+  }
+
+  /* The run's plan. */
+  .plan {
+    padding: 2px 10px 8px;
+    border-top: 1px solid var(--iron);
+  }
+
+  .plan .k {
+    margin: 8px 0 4px;
+    color: var(--ash);
+    font: 500 10px/1.2 var(--font-mono);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .plan-t {
+    margin: 0;
+    color: var(--chalk);
+    font-size: 12.5px;
+  }
+
+  .days {
+    display: grid;
+    gap: 2px;
+  }
+
+  .days .d {
+    display: grid;
+    place-items: center;
+    height: 14px;
+    border-radius: 2px;
+    background: var(--slab-hi);
+    color: var(--stone);
+    font: 600 9px/1 var(--font-mono);
+  }
+
+  .days .d.is-past {
+    background: var(--iron-hi);
+  }
+
+  .days .d.is-rain {
+    background: var(--teal);
+  }
+
+  .days .d.is-today {
+    outline: 1px solid var(--check);
+    outline-offset: 1px;
+  }
+
+  .opt {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 2px 8px;
+    margin-bottom: 4px;
+    font-size: 12.5px;
+  }
+
+  .opt-l {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  .opt-v {
+    color: var(--ash);
+    font: 500 11.5px/1.3 var(--font-mono);
+  }
+
+  .opt.is-best .opt-l,
+  .opt.is-best .opt-v {
+    color: var(--bone);
+    font-weight: 600;
+  }
+
+  .bar {
+    grid-column: 1 / -1;
+    height: 3px;
+    border-radius: 2px;
+    background: var(--slab-hi);
+  }
+
+  .bar span {
+    display: block;
+    height: 3px;
+    border-radius: 2px;
+    background: var(--iron-hi);
+  }
+
+  .opt.is-best .bar span {
+    background: var(--teal);
+  }
+
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  .chip {
+    padding: 2px 7px;
+    border: 1px solid var(--iron);
+    border-radius: 999px;
+    color: var(--chalk);
+    font-size: 12px;
+  }
+
+  button.btn[aria-pressed="true"] {
+    border-color: var(--teal);
+    color: var(--bone);
+  }
+
   .foot {
     display: flex;
     flex-wrap: wrap;
@@ -281,8 +603,14 @@
 
   /* Folded: one thin line with the advice. */
   .is-collapsed .body,
-  .is-collapsed .foot {
+  .is-collapsed .foot,
+  .is-collapsed .stats,
+  .is-collapsed .plan {
     display: none;
+  }
+
+  .is-collapsed .title {
+    flex-direction: row;
   }
 
   .is-collapsed .head {
@@ -310,16 +638,37 @@
 <body>
 <div class="card" id="card">
   <div class="head">
-    <span class="brand">Tartarus</span>
-    <span class="day" id="day"></span>
-    <span class="score" id="score" title="Rainbows vaulted this run (Warden’s Treasures opened), and how many more the advice expects by the Riot"></span>
+    <div class="ring" id="ring" hidden>
+      <svg viewBox="0 0 40 40" aria-hidden="true">
+        <circle class="ring-bg" cx="20" cy="20" r="16"></circle>
+        <circle class="ring-fg" id="ring-fg" cx="20" cy="20" r="16"></circle>
+      </svg>
+      <span id="ring-n"></span>
+    </div>
+    <div class="title">
+      <span class="goal" id="goal">Tartarus</span>
+      <span class="day" id="day"></span>
+    </div>
     <button type="button" id="fold" title="Fold it to a thin bar">&#8211;</button>
   </div>
+  <div class="stats" id="stats" hidden>
+    <div class="stat" title="Rainbows vaulted this run (Warden’s Treasures opened), and how many the advice expects by the Riot">
+      <span class="k">Rainbows</span>
+      <span class="v" id="rain"></span>
+      <span class="pips" id="pips"></span>
+    </div>
+    <div class="stat" id="obj" hidden>
+      <span class="k" id="obj-k">Objective</span>
+      <span class="v" id="obj-v"></span>
+    </div>
+  </div>
   <div class="body" id="body"></div>
+  <div class="plan" id="plan" hidden></div>
   <div class="foot" id="foot">
     <button type="button" class="btn" data-cmd="pause" id="pause" title="Stop or start taking pictures of the game (Ctrl+Alt+S)">Stop</button>
     <button type="button" class="btn" data-cmd="board" title="Show or hide the board analyzer (Ctrl+Alt+A)">Board</button>
     <button type="button" class="btn" data-cmd="capture" title="Take a picture of the game now and read it (Ctrl+Alt+P)">Picture</button>
+    <button type="button" class="btn" id="plan-btn" aria-pressed="false" title="The run's plan: its days and Rainbows, this move against the others, the objective and instruments">Plan</button>
     <button type="button" class="btn" id="report" title="Report a wrong reading, or something the simulator doesn't have">Report</button>
     <span class="dots"><span class="dot" id="dot-log">Log</span><span class="dot" id="dot-win">Window</span></span>
     <div class="menu" id="report-menu" hidden>

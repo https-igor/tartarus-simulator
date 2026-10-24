@@ -74,6 +74,18 @@ app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
 // The app never plays sound: no page it loads, now or after a site change,
 // can make any (the user heard sounds in the background while gaming).
 app.commandLine.appendSwitch('mute-audio');
+// Linux: the game runs under XWayland, and the app finds and shares its
+// window as an X window. As a Wayland window, the capture goes through the
+// desktop's screen picker instead, which can't hand over the game's window.
+// The switch only takes from the command line, so the app starts again with
+// it; and the capture goes through that picker whenever the session looks
+// like Wayland, so the app starts as if in an X session.
+if (process.platform === 'linux' && !process.argv.some((a) => a.startsWith('--ozone-platform'))) {
+  process.env.XDG_SESSION_TYPE = 'x11';
+  delete process.env.WAYLAND_DISPLAY;
+  app.relaunch({ args: [...process.argv.slice(1), '--ozone-platform=x11'] });
+  app.exit(0);
+}
 app.setAppUserModelId('io.github.blahdot3h.tartarus-overlay');
 
 // ---------- Settings ----------

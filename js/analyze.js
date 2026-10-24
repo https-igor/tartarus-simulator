@@ -507,7 +507,13 @@
 
   // ---------- Analysis ----------
 
-  const solver = { workers: null, failed: false, id: 0, st: null, key: '', instant: null, result: null, shares: null, meta: null, goal: '' };
+  const solver = { workers: null, failed: false, id: 0, st: null, key: '', pos: '', instant: null, result: null, shares: null, meta: null, goal: '' };
+  // The position a check is for: the board without the meal pick's frame
+  // (mealOnly), since the game shows the same position with its meal pick
+  // open and, after Cancel, closed.
+  const positionKey = () => JSON.stringify(Object.assign({}, model, { mealOnly: null }));
+  // The last settled advice and its position (see bestMove).
+  let advised = null;
   // The live check runs on a worker for every core but one, or on fewer when
   // the page is told (setCores: the desktop app's processor setting), each
   // playing its share of the rounds with its own dice. It runs for a few
@@ -601,6 +607,7 @@
     solver.id += 1;
     solver.st = st;
     solver.key = modelKey();
+    solver.pos = positionKey();
     solver.result = null;
     try {
       solver.instant = S.instant(st);
@@ -797,11 +804,25 @@
     // make the paired margin narrow, and a near tie flipped the advice from
     // one screen to the next (report 337: End 2.85 against the strategy's
     // consume at 2.82).
-    if (mine && (mine === live || gapOf(live, mine) <= Math.max(1.96 * mine.gapSe, SWITCH_MIN))) {
+    const near = (o) => o === live || gapOf(live, o) <= Math.max(1.96 * o.gapSe, SWITCH_MIN);
+    // A new check of the position last advised on (the same board read
+    // again, or its meal pick opened or cancelled) keeps that advice within
+    // the same margin: each check plays fresh dice, and on a near tie the
+    // advice flipped from one picture to the next (2026-10-21 day 17: End
+    // 2.67/2.65/2.57/2.78 against the strategy's consume at 2.61/2.53/2.53/2.59
+    // gave Consume, Cancel, Consume, Cancel).
+    const prior = advised && advised.pos === solver.pos ? ranked.find((o) => S.sameAction(o.action, advised.action)) : null;
+    let rec;
+    if (prior && prior !== mine && near(prior)) {
+      rec = { action: prior.action, label: prior.label, why: advised.why, live: true, rounds: r.rounds, option: prior };
+    } else if (mine && near(mine)) {
       const why = mine === live ? pick.why : `${pick.why} The live check rates it about equal to the best.`;
-      return Object.assign({ live: true, rounds: r.rounds }, pick, { label: mine.label, why, option: mine });
+      rec = Object.assign({ live: true, rounds: r.rounds }, pick, { label: mine.label, why, option: mine });
+    } else {
+      rec = { action: live.action, label: live.label, why: `The playouts found a better move than the strategy’s pick${pick ? ` (${pick.label})` : ''}.`, live: true, rounds: r.rounds, option: live };
     }
-    return { action: live.action, label: live.label, why: `The playouts found a better move than the strategy’s pick${pick ? ` (${pick.label})` : ''}.`, live: true, rounds: r.rounds, option: live };
+    if (solver.key === modelKey() && settled()) advised = { pos: solver.pos, action: rec.action, why: rec.why };
+    return rec;
   }
 
   function fmtOption(goal, o, st) {
@@ -3670,6 +3691,16 @@
       setCores: (n) => setCores(n),
       cores: () => ({ cap: coreCap, use: workerCount(), most: MOST_WORKERS, running: solver.workers ? solver.workers.length : 0, onPage: !!solver.failed }),
       day: () => model.day,
+      // The run as the board has it, for the desktop app's card: the
+      // objective and how far it is, and the instruments held.
+      run: () => {
+        const goal = model.objective !== 'other' ? T.OBJECTIVES[model.objective] : null;
+        return {
+          day: model.day,
+          objective: goal ? { name: goal.name, text: goal.text, need: goal.need || 0, unit: goal.unit || '', progress: model.walkTiles || 0, done: !!model.milestone || (!!goal.need && model.walkTiles >= goal.need) } : null,
+          tools: model.tools.map((id) => (T.TOOLS[id] ? T.TOOLS[id].name : id)),
+        };
+      },
       toast,
     };
     // In the desktop app, the link to download it has no use.

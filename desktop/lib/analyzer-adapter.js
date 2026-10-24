@@ -159,6 +159,8 @@
     const options = [...(($('az-res-list') || {}).children || [])].slice(0, 4).map((li) => ({
       label: text(li.querySelector('.solver-text')),
       value: text(li.querySelector('.solver-value')),
+      // Expected Rainbows by the Riot ("4.62 ± 0.05"), once the check is done.
+      mean: li.classList.contains('is-working') ? null : Number.parseFloat(text(li.querySelector('.solver-value'))) || null,
       best: li.classList.contains('is-best'),
     }));
     const shotText = text($('az-res-shot-text'));
@@ -223,6 +225,14 @@
         return sel && sel.value && sel.value !== 'none' && sel.selectedOptions[0] ? sel.selectedOptions[0].textContent.trim() : '';
       })(),
       step: text(step),
+      // The day, the objective and its progress, the instruments held.
+      run: (() => {
+        try {
+          return A && typeof A.run === 'function' ? A.run() : null;
+        } catch (e) {
+          return null;
+        }
+      })(),
       reading,
       lastRead,
     };
@@ -241,6 +251,13 @@
   // it's read, the advice is still the last screen's, and sending it again
   // put its marks back over the new screen.
   let holdMarks = false;
+  // The marks go down only once they've stayed gone a moment: a quiet check
+  // picture or the live check starting again took them down for under a
+  // second and put the same ones back, a blink over the game every move.
+  // Other marks replace them at once; a new screen takes them down in the
+  // app (marks-reset).
+  const CLEAR_AFTER = 1500;
+  let clearTimer = 0;
   function postMarks() {
     if (typeof D.marks !== 'function' || holdMarks) return;
     const A = window.TartarusAnalyzer;
@@ -250,7 +267,26 @@
     } catch (e) {
       p = null;
     }
-    const key = p ? JSON.stringify(p) : '';
+    const key = p ? JSON.stringify(Object.assign({}, p, { id: 0 })) : '';
+    if (!p && lastMarks) {
+      if (!clearTimer) {
+        clearTimer = setTimeout(() => {
+          clearTimer = 0;
+          let now = null;
+          try {
+            now = A.marks();
+          } catch (e) {
+            now = null;
+          }
+          if (now || holdMarks || !lastMarks) return;
+          lastMarks = '';
+          D.marks(null);
+        }, CLEAR_AFTER);
+      }
+      return;
+    }
+    clearTimeout(clearTimer);
+    clearTimer = 0;
     if (key === lastMarks) return;
     lastMarks = key;
     D.marks(p);
